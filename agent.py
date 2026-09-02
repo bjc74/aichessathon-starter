@@ -56,7 +56,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
                 best_moves = [move]
             elif score == best_score:
                 best_moves.append(move)
-    return random.choice(best).uci()
+    return random.choice(best_moves).uci()
     print(material_score(board), flush=True)#flush = true needed to print
 
     # Everything from here down is yours to replace. baselines/greedy searches one ply,
