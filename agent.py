@@ -48,8 +48,7 @@ def MVVLVA_score(board: chess.Board, move: chess.Move, scoring_const: int = 100)
 def negamax(board: chess.Board, depth: int, alpha: float, beta: float) -> float:
     moves = list(board.legal_moves)
     if not moves:
-        # (MATE - depth) incentivises engine to pursue mate in less moves
-        return -(MATE - depth) if board.is_check() else 0.0
+        return -MATE if board.is_check() else 0.0
     if depth == 0:
         return evaluate(board, len(moves))
 
