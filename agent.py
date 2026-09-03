@@ -1,5 +1,5 @@
 """The submission entrypoint. The platform imports this file and calls get_move."""
-
+import math
 import random
 import chess
 # Import time runs once per game, inside a 60 second budget, before your clock starts.
@@ -17,8 +17,36 @@ PIECE_VALUES = {
     chess.ROOK: 500,
     chess.QUEEN: 900,
 }
-
+MOBILITY_WEIGHT = 4.0
 MATE = 10**6
+
+def evaluate(board: chess.Board, mobility: int) -> float:
+    mover = board.turn
+    material = sum(
+        value * (len(board.pieces(piece, mover)) - len(board.pieces(piece, not mover)))
+        for piece, value in PIECE_VALUES.items()
+    )
+    return material + MOBILITY_WEIGHT * mobility
+
+def negamax(board: chess.Board, depth: int, alpha: float, beta: float) -> float:
+    moves = list(board.legal_moves)
+    if not moves:
+        return -MATE if board.is_check() else 0.0
+    if depth == 0:
+        return evaluate(board, len(moves))
+    
+    best = -math.inf
+    for move in moves:
+        board.push(move)
+        score = -negamax(board, depth - 1, -beta, -alpha)
+        board.pop()
+        best = max(best, score)
+        alpha = max(alpha, score)
+        if alpha >= beta:
+            break
+    return best
+
+
 #printing a basic material score, from the perspective of whoever is about to move. 
 #Idk if you guys have played chess much, but the bigger the plus the bigger the adv
 #e.g. +900 means up an entire queens worth of material
@@ -51,6 +79,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
     for move in list(board.legal_moves):
             board.push(move)
             score = MATE if board.is_checkmate() else -material_score(board)
+            # score = -negamax(board, 1)
             board.pop()
             if score > best_score:
                 best_score = score
@@ -64,4 +93,3 @@ def get_move(fen: str, time_left_ms: int) -> str:
     # baselines/minimax searches two. Neither is strong. Reading them is the fastest way
     # to see the shape of a search, and beating them is the first real milestone.
     return random.choice(list(board.legal_moves)).uci()
-
