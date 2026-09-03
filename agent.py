@@ -28,13 +28,33 @@ def evaluate(board: chess.Board, mobility: int) -> float:
     )
     return material + MOBILITY_WEIGHT * mobility
 
+# Scoring for Move Ordering (Most Valuable Victim Least Valuable Attacker)
+def MVVLVA_score(board: chess.Board, move: chess.Move, scoring_const: int = 100) -> int:
+    if not board.is_capture(move):
+        return 0
+
+    # Determine relevant pieces from move. With en-passant, 'to' square empty so set pawn
+    attacker_piece = board.piece_at(move.from_square).piece_type
+    if board.is_en_passant(move):
+        victim_piece = chess.PAWN
+    else:
+        victim_piece = board.piece_at(move.to_square).piece_type
+
+    # .get used to default val to 0 in case given piece not in PIECE_VALUES
+    attacker_value, victim_value = PIECE_VALUES.get(attacker_piece, 0), PIECE_VALUES.get(victim_piece, 0)
+    # scoring_const is subject to piece values. Altenative to this method is 2D lookup table
+    return (scoring_const * victim_value) - attacker_value
+
 def negamax(board: chess.Board, depth: int, alpha: float, beta: float) -> float:
     moves = list(board.legal_moves)
     if not moves:
-        return -MATE if board.is_check() else 0.0
+        # (MATE - depth) incentivises engine to pursue mate in less moves
+        return -(MATE - depth) if board.is_check() else 0.0
     if depth == 0:
         return evaluate(board, len(moves))
-    
+
+    # sort moves via MVV-LVA for efficient pruning
+    moves.sort(key = lambda x: MVVLVA_score(board, x), reverse = True)
     best = -math.inf
     for move in moves:
         board.push(move)
