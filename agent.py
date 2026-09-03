@@ -17,6 +17,7 @@ PIECE_VALUES = {
     chess.ROOK: 500,
     chess.QUEEN: 900,
 }
+
 MATE = 10**6
 #printing a basic material score, from the perspective of whoever is about to move. 
 #Idk if you guys have played chess much, but the bigger the plus the bigger the adv
