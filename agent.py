@@ -24,6 +24,50 @@ def evaluate(board: chess.Board, mobility: int) -> float:
     )
     return material + MOBILITY_WEIGHT * mobility
 
+# Prevent horizon effect by exploring capture chains until quiet board state
+def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int) -> float:
+    # Check if move time limit exceeded every 2048 nodes
+    node_count[0] += 1
+    if not node_count[0] % 2048:
+        if time.time() - start_time > time_limit:
+            raise TimeoutException()
+
+    # If in check, cannot only look at captures. Must look at all legal moves
+    if board.is_check():
+        moves = list(board.legal_moves)
+        # If no available moves then checkmate
+        if not moves:
+            return -(MATE-ply)
+    else:
+        # Find current board state (can be mid capture chain)
+        # Mobility set to zero since generating every legal move for every leaf node will bottleneck
+        stand_pat = evaluate(board, 0)
+
+        # If current state > beta, it cannot be reached so prune
+        if stand_pat >= beta:
+            return beta
+        if stand_pat > alpha:
+            alpha = stand_pat
+
+        # Filter out only moves which result in capture
+        moves = [move for move in board.legal_moves if board.is_capture(move)]
+
+    # Sort moves for optimal pruning
+    moves.sort(key = lambda x: score_move(board, x), reverse = True)
+
+    # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
+    for move in moves:
+        board.push(move)
+        score = -quiescence_search(board, -beta, -alpha, start_time, time_limit, node_count, ply+1)
+        board.pop()
+
+        if score >= beta:
+            return beta
+        if score > alpha:
+            alpha = score
+
+    return alpha
+
 # Scoring for Move Ordering (Most Valuable Victim Least Valuable Attacker)
 def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, priority_move: chess.Move = None) -> int:
     # Want a prioritised move to be searched first, may be most optimal
@@ -57,7 +101,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         # MATE - ply incentivises engine to prioritise the move leading to the MATE in less moves, if multiple
         return -(MATE-ply) if board.is_check() else 0.0
     if depth == 0:
-        return evaluate(board, len(moves))
+        return quiescence_search(board, alpha, beta, start_time, time_limit, node_count, ply)
 
     # sort moves via MVV-LVA for efficient pruning
     moves.sort(key = lambda x: score_move(board, x), reverse = True)
