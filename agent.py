@@ -1,14 +1,5 @@
-"""The submission entrypoint. The platform imports this file and calls get_move."""
 import math
-import random
 import chess
-# Import time runs once per game, inside a 60 second budget, before your clock starts.
-# Load weights and build tables out here, not inside get_move.
-'''
-Assign values to each piece. In future models we can improve on this by adding extra points to 
-things like connected rooks, bishop pairs, knights on outputs, pawn chains etc, or take away points
-for things like knights with no squares to move, trapped bishops etc
-'''
 import time
 
 # Custom exception raised when a move runs out of its allocated time
@@ -87,51 +78,26 @@ def get_move(fen: str, time_left_ms: int) -> str:
     if not legal_moves:
         return ''
 
-#printing a basic material score, from the perspective of whoever is about to move. 
-#Idk if you guys have played chess much, but the bigger the plus the bigger the adv
-#e.g. +900 means up an entire queens worth of material
-def material_score(board):
-    side = board.turn
-    material = sum(
-        value * (len(board.pieces(piece, side)) - len(board.pieces(piece, not side)))
-        for piece, value in PIECE_VALUES.items()
-    )
-    return material
-def positional_score(board):
-    side = board.turn
     # Can implement more dynamic approach for remaining moves, currently assumes fixed 30
     remaining_moves = 30
     increment_time = 0.5
 
-    """Return a legal move in UCI notation.
     # Determine move time window
     time_limit = ((time_left_ms / 1000) / remaining_moves) + increment_time
     start_time = time.time()
     # Count number of nodes checked so every 2048 nodes, can check if time limit exceeded
     node_count = [0]
 
-    fen           the position to move in; your colour is the side to move
-    time_left_ms  your clock before this move, in milliseconds
-    returns       "e2e4", or "e7e8q" for a promotion
     best_score = -math.inf
     best_move = legal_moves[0]
 
-    The process stays alive between your moves, so state you keep on a module or in a
-    closure survives to the next call. It does not survive to the next game.
     # Iterative deepening, to get as deep as possible in given time window
     for depth in range(1, 64):
         # If 40% time budget used do not risk searching deeper, likely to exceed limit
         if time.time() - start_time > (time_limit * 0.4):
             break
 
-    print() is safe. Your stdout is redirected away from the protocol stream, discarded
-    during rated games and shown back to you in the validation log.
-    """
-
-    # Everything from here down is yours to replace. baselines/greedy searches one ply,
-    # baselines/minimax searches two. Neither is strong. Reading them is the fastest way
-    # to see the shape of a search, and beating them is the first real milestone.
-    return random.choice(list(board.legal_moves)).uci()        # TimeoutException will be thrown if time limit exceeded hence try except block
+        # TimeoutException will be thrown if time limit exceeded hence try except block
         try:
             # Find the best move determined at given depth
             current_best_score = -math.inf
