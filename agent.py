@@ -1,6 +1,18 @@
 import math
 import chess
+import chess.polyglot
 import time
+
+# Flags for bounds in Transposition Table
+EXACT = 0
+LB = 1
+UB = 2
+
+# Cap max size of Transposition Table to manage memory
+TT_MAX_SIZE = 10**6
+
+# Global Transposition Table dictionary
+transposition_table = {}
 
 # Custom exception raised when a move runs out of its allocated time
 class TimeoutException(Exception):
@@ -69,7 +81,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
     return alpha
 
 # Scoring for Move Ordering (Most Valuable Victim Least Valuable Attacker)
-def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, priority_move: chess.Move = None) -> int:
+def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, priority_move: chess.Move = None) -> float:
     # Want a prioritised move to be searched first, may be most optimal
     if move == priority_move:
         return math.inf
@@ -96,6 +108,27 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         if time.time() - start_time > time_limit:
             raise TimeoutException()
 
+    alpha_initial = alpha
+    key = chess.polyglot.zobrist_hash(board)
+    tt_move = None
+
+    # Check if board state is in transposition table
+    if key in transposition_table:
+        entry = transposition_table[key]
+        tt_move = entry['move']
+
+        # Only used cached score if depth from entry exceeds current depth, otherwise may not be otptimal
+        if entry['depth'] >= depth:
+            cached_score = entry['score']
+            # Re-convert mate distance from being node-relative to root-relative
+            if cached_score > MATE - 1000:
+                cached_score -= ply
+            elif cached_score < - MATE + 1000:
+                cached_score += ply
+
+            if (entry['flag'] == EXACT) or (entry['flag'] == LB and cached_score >= beta) or (entry['flag'] == UB and cached_score <= alpha):
+                return cached_score
+
     moves = list(board.legal_moves)
     if not moves:
         # MATE - ply incentivises engine to prioritise the move leading to the MATE in less moves, if multiple
@@ -103,18 +136,49 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     if depth == 0:
         return quiescence_search(board, alpha, beta, start_time, time_limit, node_count, ply)
 
-    # sort moves via MVV-LVA for efficient pruning
-    moves.sort(key = lambda x: score_move(board, x), reverse = True)
-    best = -math.inf
+    # sort moves via MVV-LVA for efficient pruning, prioritise move stored in TT
+    moves.sort(key = lambda x: score_move(board, x, priority_move = tt_move), reverse = True)
+    best_score = -math.inf
+    best_move = None
+
     for move in moves:
         board.push(move)
         score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1)
         board.pop()
-        best = max(best, score)
+
+        if score > best_score:
+            best_score = score
+            best_move = move
+
         alpha = max(alpha, score)
         if alpha >= beta:
             break
-    return best
+
+    # Add to transposition table, replace exisiting if new depth larger
+    if key not in transposition_table or depth >= transposition_table[key]['depth']:
+        if len(transposition_table) >= TT_MAX_SIZE:
+            # Basic memory flush guard
+            transposition_table.clear()
+
+        # Determine flag
+        if best_score <= alpha_initial:
+            flag = UB
+        elif best_score >= beta:
+            flag = LB
+        else:
+            flag = EXACT
+
+        # Convert MATE score from being root-relative to node-relative when storing
+        # (Encode the distance of mate from this board state than from depth limit)
+        score_to_store = best_score
+        if best_score > MATE - 1000:
+            score_to_store += ply
+        elif best_score < - MATE + 1000:
+            score_to_store -= ply
+
+        transposition_table[key] = {'depth': depth, 'score': score_to_store, 'flag': flag, 'move': best_move}
+
+    return best_score
 
 def get_move(fen: str, time_left_ms: int) -> str:
     board = chess.Board(fen)
