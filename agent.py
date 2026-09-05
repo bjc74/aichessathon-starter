@@ -9,10 +9,16 @@ LB = 1
 UB = 2
 # Cap max size of Transposition Table to manage memory
 TT_MAX_SIZE = 10**6
+# Cap max ply for killer moves
+MAX_PLY = 128
+
 # Global Transposition Table dictionary
 transposition_table = {}
 # Global History Table 2D-array used for History Heuristic. history_table[from_square][to_square]
 history_table = [[0]*64 for _ in range(64)]
+# Global Killer Moves array track primary and secondary killer moves at given ply
+killer_moves = [[None, None] for _ in range(MAX_PLY)]
+
 
 # Custom exception raised when a move runs out of its allocated time
 class TimeoutException(Exception):
@@ -35,6 +41,36 @@ def evaluate(board: chess.Board, mobility: int) -> float:
         for piece, value in PIECE_VALUES.items()
     )
     return material + MOBILITY_WEIGHT * mobility
+
+# Scoring for Move Ordering (Most Valuable Victim Least Valuable Attacker)
+def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, priority_move: chess.Move = None, k1: chess.Move =None, k2: chess.Move = None) -> int:
+    # Want a prioritised move to be searched first, may be most optimal
+    if move == priority_move:
+        return 1_000_000_000
+
+    if board.is_capture(move):
+        # Determine relevant pieces from move. With en-passant, 'to' square empty so set pawn
+        attacker_piece = board.piece_at(move.from_square).piece_type
+        if board.is_en_passant(move):
+            victim_piece = chess.PAWN
+        else:
+            victim_piece = board.piece_at(move.to_square).piece_type
+
+        # .get used to default val to 0 in case given piece not in PIECE_VALUES
+        attacker_value, victim_value = PIECE_VALUES.get(attacker_piece, 0), PIECE_VALUES.get(victim_piece, 0)
+
+        # Score offset by 10^8 so captures always ranked above quiet moves
+        # scoring_const is subject to piece values. Altenative to this method is 2D lookup table
+        return 100_000_000 + (scoring_const * victim_value) - attacker_value
+
+    # Check if quiet move is a killer move at this ply
+    if move == k1:
+        return 9_000_000
+    if move == k2:
+        return 8_000_000
+
+    # Quiet moves ranked via history heuristic
+    return history_table[move.from_square][move.to_square]
 
 # Prevent horizon effect by exploring capture chains until quiet board state
 def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int) -> float:
@@ -65,7 +101,8 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         moves = [move for move in board.legal_moves if board.is_capture(move)]
 
     # Sort moves for optimal pruning
-    moves.sort(key = lambda x: score_move(board, x), reverse = True)
+    killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
+    moves.sort(key = lambda x: score_move(board, x, k1=killer_move_1, k2=killer_move_2), reverse = True)
 
     # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
     for move in moves:
@@ -79,30 +116,6 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
             alpha = score
 
     return alpha
-
-# Scoring for Move Ordering (Most Valuable Victim Least Valuable Attacker)
-def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, priority_move: chess.Move = None) -> float:
-    # Want a prioritised move to be searched first, may be most optimal
-    if move == priority_move:
-        return math.inf
-
-    if board.is_capture(move):
-        # Determine relevant pieces from move. With en-passant, 'to' square empty so set pawn
-        attacker_piece = board.piece_at(move.from_square).piece_type
-        if board.is_en_passant(move):
-            victim_piece = chess.PAWN
-        else:
-            victim_piece = board.piece_at(move.to_square).piece_type
-
-        # .get used to default val to 0 in case given piece not in PIECE_VALUES
-        attacker_value, victim_value = PIECE_VALUES.get(attacker_piece, 0), PIECE_VALUES.get(victim_piece, 0)
-
-        # Score offset by 10^8 so captures always ranked above quiet moves
-        # scoring_const is subject to piece values. Altenative to this method is 2D lookup table
-        return 10e7 + (scoring_const * victim_value) - attacker_value
-
-    # Quiet moves ranked via history heuristic
-    return float(history_table[move.from_square][move.to_square])
 
 def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int) -> float:
     # Check if move time limit exceeded every 2048 nodes
@@ -140,7 +153,8 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         return quiescence_search(board, alpha, beta, start_time, time_limit, node_count, ply)
 
     # sort moves via MVV-LVA for efficient pruning, prioritise move stored in TT
-    moves.sort(key = lambda x: score_move(board, x, priority_move = tt_move), reverse = True)
+    killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
+    moves.sort(key = lambda x: score_move(board, x, priority_move = tt_move, k1=killer_move_1, k2=killer_move_2), reverse = True)
     best_score = -math.inf
     best_move = None
 
@@ -155,9 +169,15 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
         alpha = max(alpha, score)
         if alpha >= beta:
-            # Reward quiet move that caused beta-cutoff, using depth^2 (bigger depth means more prune)
             if not board.is_capture(move):
+                # Reward quiet move that caused beta-cutoff, using depth^2 (bigger depth means more prune)
                 history_table[move.from_square][move.to_square] += depth*depth
+
+                # Update killer moves at this ply
+                if ply < MAX_PLY and move != killer_moves[ply][0]:
+                    killer_moves[ply][1] = killer_moves[ply][0]
+                    killer_moves[ply][0] = move
+
             break
 
     # Add to transposition table, replace exisiting if new depth larger
@@ -187,11 +207,14 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     return best_score
 
 def get_move(fen: str, time_left_ms: int) -> str:
-    global history_table
+    global history_table, killer_moves
 
     board = chess.Board(fen)
     # Clear history table via reassingment, for each new move
     history_table = [[0]*64 for _ in range(64)]
+    # Clear killer moves
+    killer_moves = [[None, None] for _ in range(MAX_PLY)]
+
     legal_moves = list(board.legal_moves)
     if not legal_moves:
         return ''
@@ -224,7 +247,8 @@ def get_move(fen: str, time_left_ms: int) -> str:
             beta = math.inf
 
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
-            ordered_moves = sorted(legal_moves, key = lambda x: score_move(board, x, priority_move=best_move), reverse = True)
+            killer_move_1, killer_move_2 = killer_moves[0]
+            ordered_moves = sorted(legal_moves, key = lambda x: score_move(board, x, priority_move=best_move, k1=killer_move_1, k2=killer_move_2), reverse = True)
             for move in ordered_moves:
                 board.push(move)
                 score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
