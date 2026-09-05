@@ -7,12 +7,12 @@ import time
 EXACT = 0
 LB = 1
 UB = 2
-
 # Cap max size of Transposition Table to manage memory
 TT_MAX_SIZE = 10**6
-
 # Global Transposition Table dictionary
 transposition_table = {}
+# Global History Table 2D-array used for History Heuristic. history_table[from_square][to_square]
+history_table = [[0]*64 for _ in range(64)]
 
 # Custom exception raised when a move runs out of its allocated time
 class TimeoutException(Exception):
@@ -86,20 +86,23 @@ def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, p
     if move == priority_move:
         return math.inf
 
-    if not board.is_capture(move):
-        return 0
+    if board.is_capture(move):
+        # Determine relevant pieces from move. With en-passant, 'to' square empty so set pawn
+        attacker_piece = board.piece_at(move.from_square).piece_type
+        if board.is_en_passant(move):
+            victim_piece = chess.PAWN
+        else:
+            victim_piece = board.piece_at(move.to_square).piece_type
 
-    # Determine relevant pieces from move. With en-passant, 'to' square empty so set pawn
-    attacker_piece = board.piece_at(move.from_square).piece_type
-    if board.is_en_passant(move):
-        victim_piece = chess.PAWN
-    else:
-        victim_piece = board.piece_at(move.to_square).piece_type
+        # .get used to default val to 0 in case given piece not in PIECE_VALUES
+        attacker_value, victim_value = PIECE_VALUES.get(attacker_piece, 0), PIECE_VALUES.get(victim_piece, 0)
 
-    # .get used to default val to 0 in case given piece not in PIECE_VALUES
-    attacker_value, victim_value = PIECE_VALUES.get(attacker_piece, 0), PIECE_VALUES.get(victim_piece, 0)
-    # scoring_const is subject to piece values. Altenative to this method is 2D lookup table
-    return (scoring_const * victim_value) - attacker_value
+        # Score offset by 10^8 so captures always ranked above quiet moves
+        # scoring_const is subject to piece values. Altenative to this method is 2D lookup table
+        return 10e7 + (scoring_const * victim_value) - attacker_value
+
+    # Quiet moves ranked via history heuristic
+    return float(history_table[move.from_square][move.to_square])
 
 def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int) -> float:
     # Check if move time limit exceeded every 2048 nodes
@@ -120,7 +123,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         # Only used cached score if depth from entry exceeds current depth, otherwise may not be otptimal
         if entry['depth'] >= depth:
             cached_score = entry['score']
-            # Re-convert mate distance from being node-relative to root-relative
+            # Re-convert mate distance from being top-relative to bottom-relative
             if cached_score > MATE - 1000:
                 cached_score -= ply
             elif cached_score < - MATE + 1000:
@@ -152,6 +155,9 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
         alpha = max(alpha, score)
         if alpha >= beta:
+            # Reward quiet move that caused beta-cutoff, using depth^2 (bigger depth means more prune)
+            if not board.is_capture(move):
+                history_table[move.from_square][move.to_square] += depth*depth
             break
 
     # Add to transposition table, replace exisiting if new depth larger
@@ -168,7 +174,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         else:
             flag = EXACT
 
-        # Convert MATE score from being root-relative to node-relative when storing
+        # Convert MATE score from being bottom-relative to top-relative when storing
         # (Encode the distance of mate from this board state than from depth limit)
         score_to_store = best_score
         if best_score > MATE - 1000:
@@ -181,7 +187,11 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     return best_score
 
 def get_move(fen: str, time_left_ms: int) -> str:
+    global history_table
+
     board = chess.Board(fen)
+    # Clear history table via reassingment, for each new move
+    history_table = [[0]*64 for _ in range(64)]
     legal_moves = list(board.legal_moves)
     if not legal_moves:
         return ''
@@ -227,6 +237,11 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
             best_move = current_best_move
             best_score = current_best_score
+
+            # Age history table values from older iterations to reward newer scores from deeper searches
+            for i in range(64):
+                for j in range(64):
+                    history_table[i][j] //= 2
 
         except TimeoutException:
             break
