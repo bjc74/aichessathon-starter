@@ -1,5 +1,5 @@
 import chess
-import numpy as np
+
 PIECE_VALUES = {
     chess.PAWN: 100,
     chess.KNIGHT: 320,
@@ -8,8 +8,10 @@ PIECE_VALUES = {
     chess.QUEEN: 900,
     chess.KING: 0,
 }
+
 MATE = 10**6
-PAWN_PST = np.array([
+
+PAWN_PST = [
      0,  0,  0,  0,  0,  0,  0,  0,
     50, 50, 50, 50, 50, 50, 50, 50,
     10, 10, 20, 30, 30, 20, 10, 10,
@@ -18,8 +20,9 @@ PAWN_PST = np.array([
      5, -5,-10,  0,  0,-10, -5,  5,
      5, 10, 10,-20,-20, 10, 10,  5,
      0,  0,  0,  0,  0,  0,  0,  0
-], dtype = np.int32)
-KNIGHT_PST = np.array([
+]
+
+KNIGHT_PST = [
     -50,-40,-30,-30,-30,-30,-40,-50,
     -40,-20,  0,  0,  0,  0,-20,-40,
     -30,  0, 10, 15, 15, 10,  0,-30,
@@ -28,8 +31,9 @@ KNIGHT_PST = np.array([
     -30,  5, 10, 15, 15, 10,  5,-30,
     -40,-20,  0,  5,  5,  0,-20,-40,
     -50,-40,-30,-30,-30,-30,-40,-50
-], dtype = np.int32)
-BISHOP_PST = np.array([
+]
+
+BISHOP_PST = [
     -20,-10,-10,-10,-10,-10,-10,-20,
     -10,  0,  0,  0,  0,  0,  0,-10,
     -10,  0,  5, 10, 10,  5,  0,-10,
@@ -38,8 +42,9 @@ BISHOP_PST = np.array([
     -10, 10, 10, 10, 10, 10, 10,-10,
     -10,  5,  0,  0,  0,  0,  5,-10,
     -20,-10,-10,-10,-10,-10,-10,-20
-], dtype=np.int32)
-ROOK_PST = np.array([
+]
+
+ROOK_PST = [
       0,  0,  0,  0,  0,  0,  0,  0,
       5, 10, 10, 10, 10, 10, 10,  5,
      -5,  0,  0,  0,  0,  0,  0, -5,
@@ -48,8 +53,9 @@ ROOK_PST = np.array([
      -5,  0,  0,  0,  0,  0,  0, -5,
      -5,  0,  0,  0,  0,  0,  0, -5,
       0,  0,  0,  5,  5,  0,  0,  0
-], dtype = np.int32)
-QUEEN_PST = np.array([
+]
+
+QUEEN_PST = [
     -20,-10,-10, -5, -5,-10,-10,-20,
     -10,  0,  0,  0,  0,  0,  0,-10,
     -10,  0,  5,  5,  5,  5,  0,-10,
@@ -58,8 +64,9 @@ QUEEN_PST = np.array([
     -10,  5,  5,  5,  5,  5,  0,-10,
     -10,  0,  5,  0,  0,  0,  0,-10,
     -20,-10,-10, -5, -5,-10,-10,-20
-], dtype = np.int32)
-KING_MIDDLEGAME = np.array([
+]
+
+KING_MIDDLEGAME = [
     -30,-40,-40,-50,-50,-40,-40,-30,
     -30,-40,-40,-50,-50,-40,-40,-30,
     -30,-40,-40,-50,-50,-40,-40,-30,
@@ -68,7 +75,7 @@ KING_MIDDLEGAME = np.array([
     -10,-20,-20,-20,-20,-20,-20,-10,
      20, 20,  0,  0,  0,  0, 20, 20,
      20, 30, 10,  0,  0, 10, 30, 20
-], dtype=np.int32)
+]
 
 PST = (
     None,
@@ -80,3 +87,13 @@ PST = (
     KING_MIDDLEGAME,
 )
 
+# Pre-compute combined arrays for black and white (mirrored)
+WHITE_COMBINED = [[0]*64 for _ in range(7)]
+BLACK_COMBINED = [[0]*64 for _ in range(7)]
+
+for piece_type in range(1,7):
+    val = PIECE_VALUES[piece_type]
+    pos = PST[piece_type]
+    for sq in range(64):
+        WHITE_COMBINED[piece_type][sq] = val + pos[sq ^ 56]
+        BLACK_COMBINED[piece_type][sq] = val + pos[sq]

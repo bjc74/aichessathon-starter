@@ -80,8 +80,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
             return -(MATE-ply)
     else:
         # Find current board state (can be mid capture chain)
-        # Mobility set to zero since generating every legal move for every leaf node will bottleneck
-        stand_pat = evaluate(board, 0)
+        stand_pat = evaluate(board)
 
         # If current state > beta, it cannot be reached so prune
         if stand_pat >= beta:
@@ -146,7 +145,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
     # Reverse Futility Pruning: If near leaf node and board state is really good (eval minus a margin is still bigger than beta),
     # then futile to search moves. Position is overwhelmingly winning, prune branch.
-    static_eval = evaluate(board, 0) if not board.is_check() else -math.inf
+    static_eval = evaluate(board) if not board.is_check() else -math.inf
     if depth <= 3 and not board.is_check() and abs(beta) < MATE - 1000:
         RFP_margin = 120 * depth
         if static_eval - RFP_margin >= beta:

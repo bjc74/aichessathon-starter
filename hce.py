@@ -1,23 +1,33 @@
 import chess
-from tables import PIECE_VALUES, PST
+from tables import WHITE_COMBINED, BLACK_COMBINED
 
-def material_score(board):
-    material = sum(
-        value * (
-            len(board.pieces(piece, chess.WHITE))
-            - len(board.pieces(piece, chess.BLACK))
-        )
-        for piece, value in PIECE_VALUES.items()
-    )
-    return material
-def positional_score(board):
+def evaluate(board: chess.Board) -> int:
     score = 0
-    for piece in range(chess.PAWN, chess.KING+1):
-        pst = PST[piece]
-        for square in board.pieces(piece, chess.WHITE):
-                score += pst[chess.square_mirror(square)]
-        for square in board.pieces(piece, chess.BLACK):
-                score -= pst[square]
+    w_occ = board.occupied_co[chess.WHITE]
+    b_occ = board.occupied_co[chess.BLACK]
+
+    # Pawns
+    for sq in chess.scan_forward(board.pawns & w_occ):   score += WHITE_COMBINED[1][sq]
+    for sq in chess.scan_forward(board.pawns & b_occ):   score -= BLACK_COMBINED[1][sq]
+
+    # Knights
+    for sq in chess.scan_forward(board.knights & w_occ): score += WHITE_COMBINED[2][sq]
+    for sq in chess.scan_forward(board.knights & b_occ): score -= BLACK_COMBINED[2][sq]
+
+    # Bishops
+    for sq in chess.scan_forward(board.bishops & w_occ): score += WHITE_COMBINED[3][sq]
+    for sq in chess.scan_forward(board.bishops & b_occ): score -= BLACK_COMBINED[3][sq]
+
+    # Rooks
+    for sq in chess.scan_forward(board.rooks & w_occ):   score += WHITE_COMBINED[4][sq]
+    for sq in chess.scan_forward(board.rooks & b_occ):   score -= BLACK_COMBINED[4][sq]
+
+    # Queens
+    for sq in chess.scan_forward(board.queens & w_occ):  score += WHITE_COMBINED[5][sq]
+    for sq in chess.scan_forward(board.queens & b_occ):  score -= BLACK_COMBINED[5][sq]
+
+    # Kings
+    for sq in chess.scan_forward(board.kings & w_occ):   score += WHITE_COMBINED[6][sq]
+    for sq in chess.scan_forward(board.kings & b_occ):   score -= BLACK_COMBINED[6][sq]
+
     return score
-def evaluate(board):
-    return material_score(board) + positional_score(board)
