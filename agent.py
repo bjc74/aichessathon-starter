@@ -18,7 +18,11 @@ transposition_table = {}
 history_table = [[0]*64 for _ in range(64)]
 # Global Killer Moves array track primary and secondary killer moves at given ply
 killer_moves = [[None, None] for _ in range(MAX_PLY)]
-
+# Global Late Move Reductions lookup table. LMR_TABLE[depth][move_index]
+LMR_TABLE = [[0] * 64 for _ in range(64)]
+for d in range(1,64):
+    for m in range(1,64):
+        LMR_TABLE[d][m] = int(0.5 + (math.log(d) * math.log(m)) / 2)
 
 # Custom exception raised when a move runs out of its allocated time
 class TimeoutException(Exception):
@@ -178,10 +182,28 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
             score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
         # Every other move searched with zero window (need to prove cheaply that move is worse than first, no need for find exact score)
         else:
-            score = -negamax(board, depth - 1, -alpha - 1, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
-            # If move turned out to not be worse, perform the full search on it
-            if alpha < score < beta:
-                score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
+            # LMR eligibility: Late move, depth >= 3, quiet move, not in check, does not give check
+            if i >= 3 and depth >= 3 and not board.is_capture(move) and not move.promotion and not board.is_check() and not board.gives_check(move):
+                # If LMR eligible, search later moves with reduced depth from lookup table
+                reduction = LMR_TABLE[min(depth,63)][min(i,63)]
+                reduced_depth = max(0, depth -1 -reduction)
+
+                score = -negamax(board, reduced_depth, -alpha - 1, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
+
+                # If score > alpha, want to look again still with zero window, but with full depth
+                do_full_depth_search = score > alpha
+            else:
+                # If not eligible for LMR, perform PVS using full depth
+                do_full_depth_search = True
+
+            if do_full_depth_search:
+                # Full depth zero window search
+                score = -negamax(board, depth-1, -alpha - 1, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
+
+                # Full depth full window re-search if move is promising
+                if alpha < score < beta:
+                    score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
+                    
         board.pop()
 
         if score > best_score:
@@ -285,7 +307,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
                     current_best_score = score
                     current_best_move = move
                 alpha = max(alpha, score)
-                
+
             # Only overwrite best_move if a best move from this iteration is deduced
             if current_best_move is not None:
                 best_move = current_best_move
