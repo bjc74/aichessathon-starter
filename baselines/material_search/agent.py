@@ -2,9 +2,27 @@ import math
 import chess
 import chess.polyglot
 import time
-from tables import PIECE_VALUES
 #imported current eval
-from eval import evaluate
+PIECE_VALUES = {
+    chess.PAWN: 100,
+    chess.KNIGHT: 320,
+    chess.BISHOP: 330,
+    chess.ROOK: 500,
+    chess.QUEEN: 900,
+}
+
+def evaluate(board, mobility=0):
+    mover = board.turn
+
+    material = sum(
+        value * (
+            len(board.pieces(piece, mover))
+            - len(board.pieces(piece, not mover))
+        )
+        for piece, value in PIECE_VALUES.items()
+    )
+
+    return material
 
 # Flags for bounds in Transposition Table
 EXACT = 0

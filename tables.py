@@ -1,7 +1,13 @@
-
+import chess
 import numpy as np
-#None = 0, Pawn = 1, Knight = 2, Bishop =3, Rook = 4, Queen = 5, King = 6
-PIECE_VALUES = np.array([0, 100, 320, 330, 500, 900, 0], dtype=np.int32)
+PIECE_VALUES = {
+    chess.PAWN: 100,
+    chess.KNIGHT: 320,
+    chess.BISHOP: 330,
+    chess.ROOK: 500,
+    chess.QUEEN: 900,
+    chess.KING: 0,
+}
 MATE = 10**6
 PAWN_PST = np.array([
      0,  0,  0,  0,  0,  0,  0,  0,
