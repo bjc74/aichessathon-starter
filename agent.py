@@ -156,6 +156,14 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     if depth == 0:
         return quiescence_search(board, alpha, beta, start_time, time_limit, node_count, ply)
 
+    # Reverse Futility Pruning: If near leaf node and board state is really good (eval minus a margin is still bigger than beta),
+    # then futile to search moves. Position is overwhelmingly winning, prune branch.
+    static_eval = evaluate(board, 0) if not board.is_check() else -math.inf
+    if depth <= 3 and not board.is_check() and abs(beta) < MATE - 1000:
+        RFP_margin = 120 * depth
+        if static_eval - RFP_margin >= beta:
+            return static_eval
+
     # Null Move Pruning (Simulate giving opponent extra move, large advantage, and search with reduced window + depth.
     # if still beta-cutoff, current board position too strong, prune). R is reduced depth amount.
     R = 2
@@ -176,6 +184,13 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     best_move = None
 
     for i, move in enumerate(moves):
+        # Futility Pruning, skip non tactical moves that cannot reach alpha (quiet move / move that gains no material cannot
+        # pull you out of a deep hole, futile to check, so skip). i > 0 check prevents skipping every move if all are quiet
+        if i > 0 and depth <= 2 and not board.is_check() and abs(alpha) < MATE - 1000:
+            FP_margin = 200 * depth
+            if not board.is_capture(move) and not move.promotion and not board.gives_check(move) and (static_eval + FP_margin <= alpha):
+                continue
+
         board.push(move)
         # Perform principal variation search: With efficient move ordering, first move highly likely to be optimal
         if i == 0:
@@ -203,7 +218,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
                 # Full depth full window re-search if move is promising
                 if alpha < score < beta:
                     score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
-                    
+
         board.pop()
 
         if score > best_score:
