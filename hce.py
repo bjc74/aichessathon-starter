@@ -1,10 +1,13 @@
 import chess
-from .tables import PIECE_VALUES, PST
+from tables import PIECE_VALUES, PST
 
 def material_score(board):
     material = sum(
-        PIECE_VALUES[piece] * (len(board.pieces(piece, chess.WHITE)) - len(board.pieces(piece, chess.BLACK)))
-        for piece in range(chess.PAWN, chess.KING +1)
+        value * (
+            len(board.pieces(piece, chess.WHITE))
+            - len(board.pieces(piece, chess.BLACK))
+        )
+        for piece, value in PIECE_VALUES.items()
     )
     return material
 def positional_score(board):
