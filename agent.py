@@ -157,7 +157,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     R = 2
     # Do not NMP if in check (cannot skip move here...) or if end game and opponent can only move king/pawns
     # Latter to prevent NMP occuring in zugzwang, where skipping move isn't disadvantage and would defeat NMP purpose
-    if allow_null and depth >= R + 1 and not board.is_check() and bool(board.occupied_co[board.turn] & ~board.pawns & ~board.kings):
+    if allow_null and beta < MATE - 1000 and depth >= R + 1 and not board.is_check() and bool(board.occupied_co[board.turn] & ~board.pawns & ~board.kings):
         board.push(chess.Move.null())
         # Reduced depth and window, and allow_null set to False prevents adjacent null moves
         null_score = -negamax(board, depth-1-R, -beta, -beta + 1, start_time, time_limit, node_count, ply+1, allow_null=False)
@@ -171,9 +171,17 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     best_score = -math.inf
     best_move = None
 
-    for move in moves:
+    for i, move in enumerate(moves):
         board.push(move)
-        score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
+        # Perform principal variation search: With efficient move ordering, first move highly likely to be optimal
+        if i == 0:
+            score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
+        # Every other move searched with zero window (need to prove cheaply that move is worse than first, no need for find exact score)
+        else:
+            score = -negamax(board, depth - 1, -alpha - 1, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
+            # If move turned out to not be worse, perform the full search on it
+            if alpha < score < beta:
+                score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
         board.pop()
 
         if score > best_score:
@@ -262,18 +270,26 @@ def get_move(fen: str, time_left_ms: int) -> str:
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
             killer_move_1, killer_move_2 = killer_moves[0]
             ordered_moves = sorted(legal_moves, key = lambda x: score_move(board, x, priority_move=best_move, k1=killer_move_1, k2=killer_move_2), reverse = True)
-            for move in ordered_moves:
+            for i, move in enumerate(ordered_moves):
                 board.push(move)
-                score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
+                # Principal variation search, just like in negamax function
+                if i == 0:
+                    score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
+                else:
+                    score = -negamax(board, depth-1, -alpha-1, -alpha, start_time, time_limit, node_count, 1)
+                    if alpha < score < beta:
+                        score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
                 board.pop()
 
                 if score > current_best_score:
                     current_best_score = score
                     current_best_move = move
                 alpha = max(alpha, score)
-
-            best_move = current_best_move
-            best_score = current_best_score
+                
+            # Only overwrite best_move if a best move from this iteration is deduced
+            if current_best_move is not None:
+                best_move = current_best_move
+                best_score = current_best_score
 
             # Age history table values from older iterations to reward newer scores from deeper searches
             for i in range(64):
