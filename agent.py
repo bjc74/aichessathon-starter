@@ -10,15 +10,19 @@ from eval import evaluate
 EXACT = 0
 LB = 1
 UB = 2
-# Cap max size of Transposition Table to manage memory
-TT_MAX_SIZE = 10**6
+# Transposition table stores 2^20 values
+TT_SIZE = 1_048_576
+# Bitwise indexing. Mask is 20 1's, so isolates last 20 of 64-bit Zobrist hash
+TT_MASK = TT_SIZE - 1
+# Global move counter
+current_age = 0
 # Cap max ply for killer moves
 MAX_PLY = 128
 #mate
 MATE = 10**6
 
-# Global Transposition Table dictionary
-transposition_table = {}
+# Global Transposition Table array
+transposition_table = [None] * TT_SIZE
 # Global History Table 2D-array used for History Heuristic. history_table[from_square][to_square]
 history_table = [[0]*64 for _ in range(64)]
 # Global Killer Moves array track primary and secondary killer moves at given ply
@@ -93,9 +97,10 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
 
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    scored_moves = [(score_move(board, x, k1=killer_move_1, k2=killer_move_2), x) for x in moves]
+    # i needed to break ties in sorting when scores are equal
+    scored_moves = [(score_move(board, x, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(moves)]
     scored_moves.sort(reverse=True)
-    moves = [m for _, m in scored_moves]
+    moves = [m for _,_, m in scored_moves]
 
     # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
     for move in moves:
@@ -122,8 +127,9 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     tt_move = None
 
     # Check if board state is in transposition table
-    if key in transposition_table:
-        entry = transposition_table[key]
+    idx = key & TT_MASK
+    entry = transposition_table[idx]
+    if entry is not None and entry['key'] == key:
         tt_move = entry['move']
 
         # Only used cached score if depth from entry exceeds current depth, otherwise may not be otptimal
@@ -168,9 +174,9 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
     # sort moves via MVV-LVA for efficient pruning, prioritise move stored in TT
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    scored_moves = [(score_move(board, x, priority_move = tt_move, k1=killer_move_1, k2=killer_move_2), x) for x in moves]
+    scored_moves = [(score_move(board, x, priority_move = tt_move, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(moves)]
     scored_moves.sort(reverse=True)
-    moves = [m for _, m in scored_moves]
+    moves = [m for _,_, m in scored_moves]
     best_score = -math.inf
     best_move = None
 
@@ -230,11 +236,10 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
             break
 
     # Add to transposition table, replace exisiting if new depth larger
-    if key not in transposition_table or depth >= transposition_table[key]['depth']:
-        if len(transposition_table) >= TT_MAX_SIZE:
-            # Basic memory flush guard
-            transposition_table.clear()
-
+    idx = key & TT_MASK
+    entry = transposition_table[idx]
+    # If collision, replace stale entry
+    if entry is None or entry['key'] == key or depth >= entry['depth'] or entry['age'] != current_age:
         # Determine flag
         if best_score <= alpha_initial:
             flag = UB
@@ -251,12 +256,13 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         elif best_score < - MATE + 1000:
             score_to_store -= ply
 
-        transposition_table[key] = {'depth': depth, 'score': score_to_store, 'flag': flag, 'move': best_move}
+        transposition_table[idx] = {'key': key, 'depth': depth, 'score': score_to_store, 'flag': flag, 'move': best_move, 'age': current_age}
 
     return best_score
 
 def get_move(fen: str, time_left_ms: int) -> str:
-    global history_table, killer_moves
+    global history_table, killer_moves, current_age
+    current_age += 1
 
     board = chess.Board(fen)
     # Clear history table via reassingment, for each new move
@@ -297,10 +303,10 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
             killer_move_1, killer_move_2 = killer_moves[0]
-            scored_moves = [(score_move(board, x, priority_move =best_move, k1=killer_move_1, k2=killer_move_2), x) for x in legal_moves]
+            scored_moves = [(score_move(board, x, priority_move =best_move, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(legal_moves)]
             scored_moves.sort(reverse=True)
-            ordered_moves = [m for _, m in scored_moves]
-            
+            ordered_moves = [m for _, _, m in scored_moves]
+
             for i, move in enumerate(ordered_moves):
                 board.push(move)
                 # Principal variation search, just like in negamax function
