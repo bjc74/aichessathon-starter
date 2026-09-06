@@ -84,6 +84,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
             return -(MATE-ply)
     else:
         # Find current board state (can be mid capture chain)
+        # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
         stand_pat = evaluate(board)
 
         # If current state > beta, it cannot be reached so prune
@@ -95,6 +96,12 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         # Filter out only moves which result in capture
         moves = list(board.generate_legal_captures())
 
+    # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
+    # is still below alpha, capture is hopeless, may be skipped
+    BIG_DELTA = 900 # Queen value
+    if stand_pat + BIG_DELTA < alpha:
+        return alpha
+
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
     # i needed to break ties in sorting when scores are equal
@@ -102,7 +109,6 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
     scored_moves.sort(reverse=True)
     moves = [m for _,_, m in scored_moves]
 
-    # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
     for move in moves:
         board.push(move)
         score = -quiescence_search(board, -beta, -alpha, start_time, time_limit, node_count, ply+1)
