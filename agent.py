@@ -68,7 +68,7 @@ def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, p
 def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int) -> float:
     # Check if move time limit exceeded every 2048 nodes
     node_count[0] += 1
-    if not node_count[0] % 2048:
+    if not (node_count[0] & 2047):
         if time.time() - start_time > time_limit:
             raise TimeoutException()
 
@@ -89,11 +89,13 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
             alpha = stand_pat
 
         # Filter out only moves which result in capture
-        moves = [move for move in board.legal_moves if board.is_capture(move)]
+        moves = list(board.generate_legal_captures())
 
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    moves.sort(key = lambda x: score_move(board, x, k1=killer_move_1, k2=killer_move_2), reverse = True)
+    scored_moves = [(score_move(board, x, k1=killer_move_1, k2=killer_move_2), x) for x in moves]
+    scored_moves.sort(reverse=True)
+    moves = [m for _, m in scored_moves]
 
     # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
     for move in moves:
@@ -111,7 +113,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
 def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int, allow_null: bool = True) -> float:
     # Check if move time limit exceeded every 2048 nodes
     node_count[0] += 1
-    if not node_count[0] % 2048:
+    if not (node_count[0] & 2047):
         if time.time() - start_time > time_limit:
             raise TimeoutException()
 
@@ -166,7 +168,9 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
     # sort moves via MVV-LVA for efficient pruning, prioritise move stored in TT
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    moves.sort(key = lambda x: score_move(board, x, priority_move = tt_move, k1=killer_move_1, k2=killer_move_2), reverse = True)
+    scored_moves = [(score_move(board, x, priority_move = tt_move, k1=killer_move_1, k2=killer_move_2), x) for x in moves]
+    scored_moves.sort(reverse=True)
+    moves = [m for _, m in scored_moves]
     best_score = -math.inf
     best_move = None
 
@@ -293,7 +297,10 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
             killer_move_1, killer_move_2 = killer_moves[0]
-            ordered_moves = sorted(legal_moves, key = lambda x: score_move(board, x, priority_move=best_move, k1=killer_move_1, k2=killer_move_2), reverse = True)
+            scored_moves = [(score_move(board, x, priority_move =best_move, k1=killer_move_1, k2=killer_move_2), x) for x in legal_moves]
+            scored_moves.sort(reverse=True)
+            ordered_moves = [m for _, m in scored_moves]
+            
             for i, move in enumerate(ordered_moves):
                 board.push(move)
                 # Principal variation search, just like in negamax function
