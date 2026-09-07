@@ -93,15 +93,13 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         if stand_pat > alpha:
             alpha = stand_pat
 
+        # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
+        # is still below alpha, capture is hopeless, may be skipped
+        BIG_DELTA = 900 # Queen value
+        if stand_pat + BIG_DELTA < alpha:
+            return alpha
         # Filter out only moves which result in capture
         moves = list(board.generate_legal_captures())
-
-    # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
-    # is still below alpha, capture is hopeless, may be skipped
-    BIG_DELTA = 900 # Queen value
-    if stand_pat + BIG_DELTA < alpha:
-        return alpha
-
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
     # i needed to break ties in sorting when scores are equal
