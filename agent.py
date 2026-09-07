@@ -138,8 +138,13 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         if not pawns_near_promotion and (stand_pat + BIG_DELTA < alpha):
             return alpha
 
-        # Filter out only moves which result in capture (or promotion to queen)
-        moves = [m for m in board.legal_moves if board.is_capture(m) or m.promotion == chess.QUEEN]
+        # Filter out only moves which result in capture
+        moves = list(board.generate_legal_captures())
+        # Append quiet queen promotions if pawns are near promotion ranks
+        if board.pawns & (chess.BB_RANK_7 | chess.BB_RANK_2):
+            for m in board.generate_legal_moves(from_mask=chess.BB_RANK_7 | chess.BB_RANK_2):
+                if m.promotion == chess.QUEEN and not board.is_capture(m):
+                    moves.append(m)
 
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
