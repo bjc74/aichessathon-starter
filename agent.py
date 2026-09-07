@@ -1,6 +1,5 @@
 import math
 import chess
-import chess.polyglot
 import time
 from tables import PIECE_VALUES
 #imported current eval
@@ -91,7 +90,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
             raise TimeoutException()
 
     # TT Probe in QS
-    key = chess.polyglot.zobrist_hash(board)
+    key = hash(board._transposition_key())
     idx = key & TT_MASK
     entry = transposition_table[idx]
     tt_move = None
@@ -177,7 +176,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
             raise TimeoutException()
 
     alpha_initial = alpha
-    key = chess.polyglot.zobrist_hash(board)
+    key = hash(board._transposition_key())
     tt_move = None
 
     # Check if board state is in transposition table
@@ -344,7 +343,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
     best_move = legal_moves[0]
 
     # Pre-populate best_move from TT if available
-    key = chess.polyglot.zobrist_hash(board)
+    key = hash(board._transposition_key())
     idx = key & TT_MASK
     entry = transposition_table[idx]
     if entry is not None and entry['key'] == key and entry['move'] in legal_moves:
