@@ -166,7 +166,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     # Dynamic Contempt: If option to draw, condemn if winning
     if ply > 0 and (board.is_repetition(2) or board.is_fifty_moves()):
         # If eval is pos, draw score neg (bad). If eval neg, draw score 0 (neutral)
-        eval_val = evaluate(board) if not board.is_check() else 0
+        eval_val = evaluate(board)
         draw_score = min(0, -int(eval_val*0.5))
         return draw_score
 
