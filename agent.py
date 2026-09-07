@@ -10,6 +10,8 @@ from eval import evaluate
 EXACT = 0
 LB = 1
 UB = 2
+#Adding Aspiration Window
+ASPIRATION_WINDOW = 40
 # Transposition table stores 2^20 values
 TT_SIZE = 1_048_576
 # Bitwise indexing. Mask is 20 1's, so isolates last 20 of 64-bit Zobrist hash
@@ -139,7 +141,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     # Dynamic Contempt: If option to draw, condemn if winning
     if ply > 0 and (board.is_repetition(2) or board.is_fifty_moves()):
         # If eval is pos, draw score neg (bad). If eval neg, draw score 0 (neutral)
-        eval_val = evaluate(board) if not board.is_check() else 0
+        eval_val = evaluate(board)
         draw_score = min(0, -int(eval_val*0.5))
         return draw_score
 
@@ -326,8 +328,14 @@ def get_move(fen: str, time_left_ms: int) -> str:
             # Find the best move determined at given depth
             current_best_score = -math.inf
             current_best_move = None
-            alpha = -math.inf
-            beta = math.inf
+            if depth == 1:
+                alpha = -math.inf
+                beta = math.inf
+            else:
+                alpha = best_score - ASPIRATION_WINDOW
+                beta = best_score + ASPIRATION_WINDOW
+            window_alpha = alpha
+            window_beta = beta
             depth_start_time = time.time()
 
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
@@ -351,7 +359,33 @@ def get_move(fen: str, time_left_ms: int) -> str:
                     current_best_score = score
                     current_best_move = move
                 alpha = max(alpha, score)
-
+                if alpha >=beta:
+                    break
+            if current_best_score <= window_alpha or current_best_score >= window_beta:
+                alpha = -math.inf
+                beta = math.inf
+                current_best_score = -math.inf
+                current_best_move = None
+                # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
+                killer_move_1, killer_move_2 = killer_moves[0]
+                scored_moves = [(score_move(board, x, priority_move =best_move, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(legal_moves)]
+                scored_moves.sort(reverse=True)
+                ordered_moves = [m for _, _, m in scored_moves]
+                    
+                for i, move in enumerate(ordered_moves):
+                    board.push(move)
+                    # Principal variation search, just like in negamax function
+                    if i == 0:
+                        score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
+                    else:
+                        score = -negamax(board, depth-1, -alpha-1, -alpha, start_time, time_limit, node_count, 1)
+                        if alpha < score < beta:
+                            score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
+                    board.pop()
+                    if score > current_best_score:
+                        current_best_score = score
+                        current_best_move = move
+                    alpha = max(alpha, score)
             # Only overwrite best_move if a best move from this iteration is deduced
             if current_best_move is not None:
                 best_move = current_best_move
