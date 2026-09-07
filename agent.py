@@ -292,13 +292,16 @@ def get_move(fen: str, time_left_ms: int) -> str:
     if not legal_moves:
         return ''
 
-    # Can implement more dynamic approach for remaining moves, currently assumes fixed 30
-    remaining_moves = 30
+    # Adapt remaining moves dynamically
+    remaining_moves = max(10, 50 - board.fullmove_number)
     increment_time = 0.5
 
     # Determine move time window
     time_limit = ((time_left_ms / 1000) / remaining_moves) + increment_time
+    # Never spend more than 80% of remaining time on single move
+    time_limit = min(time_limit, (time_left_ms / 1000) * 0.8)
     start_time = time.time()
+    previous_depth_time = 0
     # Count number of nodes checked so every 2048 nodes, can check if time limit exceeded
     node_count = [0]
 
@@ -307,8 +310,8 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
     # Iterative deepening, to get as deep as possible in given time window
     for depth in range(1, 64):
-        # If 40% time budget used do not risk searching deeper, likely to exceed limit
-        if time.time() - start_time > (time_limit * 0.4):
+        # Assume next depth will take 2.5x longer than previous. If remaining time less than this, do not attempt depth
+        if depth > 1 and time_limit - (time.time() - start_time) < previous_depth_time * 2.5:
             break
 
         # TimeoutException will be thrown if time limit exceeded hence try except block
@@ -318,6 +321,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
             current_best_move = None
             alpha = -math.inf
             beta = math.inf
+            depth_start_time = time.time()
 
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
             killer_move_1, killer_move_2 = killer_moves[0]
@@ -345,6 +349,9 @@ def get_move(fen: str, time_left_ms: int) -> str:
             if current_best_move is not None:
                 best_move = current_best_move
                 best_score = current_best_score
+
+            # Find the time taken at this depth, to determine if enough time for a deeper search    
+            previous_depth_time = time.time() - depth_start_time
 
         except TimeoutException:
             break
