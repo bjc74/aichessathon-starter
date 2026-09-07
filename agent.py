@@ -90,6 +90,23 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         if time.time() - start_time > time_limit:
             raise TimeoutException()
 
+    # TT Probe in QS
+    key = chess.polyglot.zobrist_hash(board)
+    idx = key & TT_MASK
+    entry = transposition_table[idx]
+    tt_move = None
+
+    if entry is not None and entry['key'] == key:
+        tt_move = entry['move']
+        cached_score = entry['score']
+        if cached_score > MATE - 1000:
+            cached_score -= ply
+        elif cached_score < - MATE + 1000:
+            cached_score += ply
+
+        if (entry['flag'] == EXACT) or (entry['flag'] == LB and cached_score >= beta) or (entry['flag'] == UB and cached_score <= alpha):
+            return cached_score
+
     # If in check, cannot only look at captures. Must look at all legal moves
     if board.is_check():
         moves = list(board.legal_moves)
@@ -119,13 +136,13 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         if not pawns_near_promotion and (stand_pat + BIG_DELTA < alpha):
             return alpha
 
-        # Filter out only moves which result in capture
-        moves = list(board.generate_legal_captures())
+        # Filter out only moves which result in capture (or promotion to queen)
+        moves = [m for m in board.legal_moves if board.is_capture(m) or m.promotion == chess.QUEEN]
 
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
     # i needed to break ties in sorting when scores are equal
-    scored_moves = [(score_move(board, x, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(moves)]
+    scored_moves = [(score_move(board, x, k1=killer_move_1, k2=killer_move_2, priority_move=tt_move), i, x) for i, x in enumerate(moves)]
     scored_moves.sort(reverse=True)
     moves = [m for _,_, m in scored_moves]
 
