@@ -79,8 +79,8 @@ def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, p
     if move == k2:
         return 8_000_000
 
-    # Quiet moves ranked via history heuristic
-    return history_table[move.from_square][move.to_square]
+    # Quiet moves ranked via history heuristic. Cap score so it does not exceed killer move priority
+    return min(history_table[move.from_square][move.to_square], 7_000_000)
 
 # Prevent horizon effect by exploring capture chains until quiet board state
 def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int) -> float:
@@ -110,7 +110,13 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
         # is still below alpha, capture is hopeless, may be skipped
         BIG_DELTA = 900 # Queen value
-        if stand_pat + BIG_DELTA < alpha:
+
+        # If a pawn about to promote, CAN bridge gap so don't delta prune
+        white_pawns_on_7 = board.pawns & board.occupied_co[chess.WHITE] & chess.BB_RANK_7
+        black_pawns_on_2 = board.pawns & board.occupied_co[chess.BLACK] & chess.BB_RANK_2
+        pawns_near_promotion = bool(white_pawns_on_7 | black_pawns_on_2)
+
+        if not pawns_near_promotion and (stand_pat + BIG_DELTA < alpha):
             return alpha
 
         # Filter out only moves which result in capture
@@ -251,7 +257,8 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
         alpha = max(alpha, score)
         if alpha >= beta:
-            if not board.is_capture(move):
+            # Exclude captures and promotions from history table intended for quiet moves
+            if not board.is_capture(move) and not move.promotion:
                 # Reward quiet move that caused beta-cutoff, using depth^2 (bigger depth means more prune)
                 history_table[move.from_square][move.to_square] += depth*depth
 
@@ -314,6 +321,13 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
     best_score = -math.inf
     best_move = legal_moves[0]
+
+    # Pre-populate best_move from TT if available
+    key = chess.polyglot.zobrist_hash(board)
+    idx = key & TT_MASK
+    entry = transposition_table[idx]
+    if entry is not None and entry['key'] == key and entry['move'] in legal_moves:
+        best_move = entry['move']
 
     # Iterative deepening, to get as deep as possible in given time window
     for depth in range(1, 64):
