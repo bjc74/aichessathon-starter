@@ -5,7 +5,6 @@ import time
 from tables import PIECE_VALUES
 #imported current eval
 from eval import evaluate
-
 # Flags for bounds in Transposition Table
 EXACT = 0
 LB = 1
@@ -216,7 +215,10 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
             FP_margin = 200 * depth
             if not board.is_capture(move) and not move.promotion and not board.gives_check(move) and (static_eval + FP_margin <= alpha):
                 continue
-
+        #storing states before we push a move
+        is_capture = board.is_capture(move)
+        in_check = board.is_check()
+        gives_check = board.gives_check(move)
         board.push(move)
         # Perform principal variation search: With efficient move ordering, first move highly likely to be optimal
         if i == 0:
@@ -224,7 +226,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         # Every other move searched with zero window (need to prove cheaply that move is worse than first, no need for find exact score)
         else:
             # LMR eligibility: Late move, depth >= 3, quiet move, not in check, does not give check
-            if i >= 3 and depth >= 3 and not board.is_capture(move) and not move.promotion and not board.is_check() and not board.gives_check(move):
+            if i >= 3 and depth >= 3 and not is_capture and not move.promotion and not in_check and not gives_check:
                 # If LMR eligible, search later moves with reduced depth from lookup table
                 reduction = LMR_TABLE[min(depth,63)][min(i,63)]
                 reduced_depth = max(0, depth -1 -reduction)
@@ -390,7 +392,6 @@ def get_move(fen: str, time_left_ms: int) -> str:
             if current_best_move is not None:
                 best_move = current_best_move
                 best_score = current_best_score
-
             # Find the time taken at this depth, to determine if enough time for a deeper search    
             previous_depth_time = time.time() - depth_start_time
 
