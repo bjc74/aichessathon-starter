@@ -238,7 +238,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         # pull you out of a deep hole, futile to check, so skip). i > 0 check prevents skipping every move if all are quiet
         if i > 0 and depth <= 2 and not board.is_check() and alpha > -MATE + 1000:
             FP_margin = 200 * depth
-            if not board.is_capture(move) and not move.promotion and not board.gives_check(move) and (static_eval + FP_margin <= alpha):
+            if not board.is_capture(move) and not move.promotion and (static_eval + FP_margin <= alpha):
                 continue
 
         board.push(move)
@@ -248,7 +248,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         # Every other move searched with zero window (need to prove cheaply that move is worse than first, no need for find exact score)
         else:
             # LMR eligibility: Late move, depth >= 3, quiet move, not in check, does not give check
-            if i >= 3 and depth >= 3 and not board.is_capture(move) and not move.promotion and not board.is_check() and not board.gives_check(move):
+            if i >= 3 and depth >= 3 and not board.is_capture(move) and not move.promotion and not board.is_check():
                 # If LMR eligible, search later moves with reduced depth from lookup table
                 reduction = LMR_TABLE[min(depth,63)][min(i,63)]
                 reduced_depth = max(0, depth -1 -reduction)
