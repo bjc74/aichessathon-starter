@@ -44,6 +44,8 @@ def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, p
     if move == priority_move:
         return 1_000_000_000
 
+    is_promotion = move.promotion is not None
+
     if board.is_capture(move):
         # Determine relevant pieces from move. With en-passant, 'to' square empty so set pawn
         attacker_piece = board.piece_at(move.from_square).piece_type
@@ -57,7 +59,19 @@ def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, p
 
         # Score offset by 10^8 so captures always ranked above quiet moves
         # scoring_const is subject to piece values. Altenative to this method is 2D lookup table
-        return 100_000_000 + (scoring_const * victim_value) - attacker_value
+        mvv_lva = 100_000_000 + (scoring_const * victim_value) - attacker_value
+
+        # Promoting capture scores higher
+        if is_promotion and move.promotion == chess.QUEEN:
+            return mvv_lva + 100_000_000
+        return mvv_lva
+
+    # Quiet promotions rank next highest
+    if is_promotion:
+        if move.promotion == chess.QUEEN:
+            return 90_000_000
+        elif move.promotion == chess.KNIGHT:
+            return 9_500_000 # Ranks just above primary quiet killer move
 
     # Check if quiet move is a killer move at this ply
     if move == k1:
@@ -93,14 +107,14 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         if stand_pat > alpha:
             alpha = stand_pat
 
+        # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
+        # is still below alpha, capture is hopeless, may be skipped
+        BIG_DELTA = 900 # Queen value
+        if stand_pat + BIG_DELTA < alpha:
+            return alpha
+
         # Filter out only moves which result in capture
         moves = list(board.generate_legal_captures())
-
-    # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
-    # is still below alpha, capture is hopeless, may be skipped
-    BIG_DELTA = 900 # Queen value
-    if stand_pat + BIG_DELTA < alpha:
-        return alpha
 
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
@@ -160,7 +174,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     # Reverse Futility Pruning: If near leaf node and board state is really good (eval minus a margin is still bigger than beta),
     # then futile to search moves. Position is overwhelmingly winning, prune branch.
     static_eval = evaluate(board) if not board.is_check() else -math.inf
-    if depth <= 3 and not board.is_check() and abs(beta) < MATE - 1000:
+    if depth <= 3 and not board.is_check() and beta < MATE - 1000:
         RFP_margin = 120 * depth
         if static_eval - RFP_margin >= beta:
             return static_eval
@@ -189,7 +203,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     for i, move in enumerate(moves):
         # Futility Pruning, skip non tactical moves that cannot reach alpha (quiet move / move that gains no material cannot
         # pull you out of a deep hole, futile to check, so skip). i > 0 check prevents skipping every move if all are quiet
-        if i > 0 and depth <= 2 and not board.is_check() and abs(alpha) < MATE - 1000:
+        if i > 0 and depth <= 2 and not board.is_check() and alpha > -MATE + 1000:
             FP_margin = 200 * depth
             if not board.is_capture(move) and not move.promotion and not board.gives_check(move) and (static_eval + FP_margin <= alpha):
                 continue
@@ -271,8 +285,6 @@ def get_move(fen: str, time_left_ms: int) -> str:
     current_age += 1
 
     board = chess.Board(fen)
-    # Clear history table via reassingment, for each new move
-    history_table = [[0]*64 for _ in range(64)]
     # Clear killer moves
     killer_moves = [[None, None] for _ in range(MAX_PLY)]
 
@@ -334,12 +346,12 @@ def get_move(fen: str, time_left_ms: int) -> str:
                 best_move = current_best_move
                 best_score = current_best_score
 
-            # Age history table values from older iterations to reward newer scores from deeper searches
-            for i in range(64):
-                for j in range(64):
-                    history_table[i][j] //= 2
-
         except TimeoutException:
             break
+
+    # Age history table values from older iterations to reward newer scores from deeper searches
+    for i in range(64):
+        for j in range(64):
+            history_table[i][j] //= 2
 
     return best_move.uci()
