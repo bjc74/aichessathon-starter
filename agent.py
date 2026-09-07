@@ -113,6 +113,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         # If no available moves then checkmate
         if not moves:
             return -(MATE-ply)
+        best_score = -math.inf
     else:
         # Find current board state (can be mid capture chain)
         # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
@@ -123,6 +124,8 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
             return beta
         if stand_pat > alpha:
             alpha = stand_pat
+
+        best_score = stand_pat
 
         # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
         # is still below alpha, capture is hopeless, may be skipped
@@ -151,12 +154,13 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         score = -quiescence_search(board, -beta, -alpha, start_time, time_limit, node_count, ply+1)
         board.pop()
 
+        best_score = max(score, best_score)
         if score >= beta:
             return beta
         if score > alpha:
             alpha = score
 
-    return alpha
+    return best_score
 
 def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int, allow_null: bool = True) -> float:
     # Dynamic Contempt: If option to draw, condemn if winning
