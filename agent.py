@@ -1,6 +1,5 @@
 import math
 import chess
-import chess.polyglot
 import time
 from tables import PIECE_VALUES
 #imported current eval
@@ -80,8 +79,8 @@ def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, p
     if move == k2:
         return 8_000_000
 
-    # Quiet moves ranked via history heuristic
-    return history_table[move.from_square][move.to_square]
+    # Quiet moves ranked via history heuristic. Cap score so it does not exceed killer move priority
+    return min(history_table[move.from_square][move.to_square], 7_000_000)
 
 # Prevent horizon effect by exploring capture chains until quiet board state
 def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int) -> float:
@@ -91,50 +90,105 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         if time.time() - start_time > time_limit:
             raise TimeoutException()
 
+    alpha_initial = alpha
+
+    # TT Probe in QS
+    key = hash(board._transposition_key())
+    idx = key & TT_MASK
+    entry = transposition_table[idx]
+    tt_move = None
+
+    if entry is not None and entry[0] == key:
+        e_key, cached_score, e_depth, e_flag, tt_move, e_age = entry
+        if cached_score > MATE - 1000:
+            cached_score -= ply
+        elif cached_score < - MATE + 1000:
+            cached_score += ply
+
+        if (e_flag == EXACT) or (e_flag == LB and cached_score >= beta) or (e_flag == UB and cached_score <= alpha):
+            return cached_score
+
     # If in check, cannot only look at captures. Must look at all legal moves
     if board.is_check():
         moves = list(board.legal_moves)
         # If no available moves then checkmate
         if not moves:
             return -(MATE-ply)
+        best_score = -math.inf
     else:
         # Find current board state (can be mid capture chain)
         # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
         stand_pat = evaluate(board)
 
-        # If current state > beta, it cannot be reached so prune
+        # Stand-pat Beta Cutoff (store LB entry before returning)
         if stand_pat >= beta:
+            if entry is None or 0 >= entry[2] or (current_age - entry[5] >= 2):
+                transposition_table[idx] = (key, stand_pat, 0, LB, None, current_age)
             return beta
+
         if stand_pat > alpha:
             alpha = stand_pat
+
+        best_score = stand_pat
 
         # Delta pruning. If standing pat plus max possible material gain from capture, plus safety margin
         # is still below alpha, capture is hopeless, may be skipped
         BIG_DELTA = 900 # Queen value
-        if stand_pat + BIG_DELTA < alpha:
+
+        # If a pawn about to promote, CAN bridge gap so don't delta prune
+        white_pawns_on_7 = board.pawns & board.occupied_co[chess.WHITE] & chess.BB_RANK_7
+        black_pawns_on_2 = board.pawns & board.occupied_co[chess.BLACK] & chess.BB_RANK_2
+        pawns_near_promotion = bool(white_pawns_on_7 | black_pawns_on_2)
+
+        if not pawns_near_promotion and (stand_pat + BIG_DELTA < alpha):
             return alpha
         
         # Filter out only moves which result in capture
         moves = list(board.generate_legal_captures())
+        # Append quiet queen promotions if pawns are near promotion ranks
+        if board.pawns & (chess.BB_RANK_7 | chess.BB_RANK_2):
+            for m in board.generate_legal_moves(from_mask=chess.BB_RANK_7 | chess.BB_RANK_2):
+                if m.promotion == chess.QUEEN and not board.is_capture(m):
+                    moves.append(m)
 
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    # i needed to break ties in sorting when scores are equal
-    scored_moves = [(score_move(board, x, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(moves)]
-    scored_moves.sort(reverse=True)
-    moves = [m for _,_, m in scored_moves]
+    moves.sort(key=lambda m: score_move(board, m, k1=killer_move_1, k2=killer_move_2, priority_move=tt_move), reverse=True)
 
     for move in moves:
         board.push(move)
         score = -quiescence_search(board, -beta, -alpha, start_time, time_limit, node_count, ply+1)
         board.pop()
 
+        best_score = max(score, best_score)
         if score >= beta:
-            return beta
+            break
+
         if score > alpha:
             alpha = score
 
-    return alpha
+    # Write to TT. QS operates at depth 0, so only ovewrite collision if it is stale or also a QS
+    # entry (depth also 0) as it is more shallow / less computationally expensive than non-QS entry
+    if entry is None or 0 >= entry[2] or (current_age - entry[5] >= 2):
+        # Determine flag
+        if best_score <= alpha_initial:
+            flag = UB
+        elif best_score >= beta:
+            flag = LB
+        else:
+            flag = EXACT
+
+        # Convert MATE score from being bottom-relative to top-relative when storing
+        # (Encode the distance of mate from this board state than from depth limit)
+        score_to_store = best_score
+        if best_score > MATE - 1000:
+            score_to_store += ply
+        elif best_score < - MATE + 1000:
+            score_to_store -= ply
+
+        transposition_table[idx] = (key, score_to_store, 0, flag, None, current_age)
+
+    return best_score
 
 def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_time: float, time_limit: float, node_count: list, ply: int, allow_null: bool = True) -> float:
     # Dynamic Contempt: If option to draw, condemn if winning
@@ -151,25 +205,24 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
             raise TimeoutException()
 
     alpha_initial = alpha
-    key = chess.polyglot.zobrist_hash(board)
+    key = hash(board._transposition_key())
     tt_move = None
 
     # Check if board state is in transposition table
     idx = key & TT_MASK
     entry = transposition_table[idx]
-    if entry is not None and entry['key'] == key:
-        tt_move = entry['move']
+    if entry is not None and entry[0] == key:
+        e_key, cached_score, e_depth, e_flag, tt_move, e_age = entry
 
         # Only used cached score if depth from entry exceeds current depth, otherwise may not be otptimal
-        if entry['depth'] >= depth:
-            cached_score = entry['score']
+        if e_depth >= depth:
             # Re-convert mate distance from being top-relative to bottom-relative
             if cached_score > MATE - 1000:
                 cached_score -= ply
             elif cached_score < - MATE + 1000:
                 cached_score += ply
 
-            if (entry['flag'] == EXACT) or (entry['flag'] == LB and cached_score >= beta) or (entry['flag'] == UB and cached_score <= alpha):
+            if (e_flag == EXACT) or (e_flag == LB and cached_score >= beta) or (e_flag == UB and cached_score <= alpha):
                 return cached_score
 
     moves = list(board.legal_moves)
@@ -185,6 +238,9 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     if depth <= 3 and not board.is_check() and beta < MATE - 1000:
         RFP_margin = 120 * depth
         if static_eval - RFP_margin >= beta:
+            # TT Store on RFP Cutoff
+            if entry is None or depth >= entry[2] or (current_age - entry[5] >= 2):
+                transposition_table[idx] = (key, static_eval, depth, LB, None, current_age)
             return static_eval
 
     # Null Move Pruning (Simulate giving opponent extra move, large advantage, and search with reduced window + depth.
@@ -198,13 +254,14 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         null_score = -negamax(board, depth-1-R, -beta, -beta + 1, start_time, time_limit, node_count, ply+1, allow_null=False)
         board.pop()
         if null_score >= beta:
+            # TT Store on NMP Cutoff
+            if entry is None or depth >= entry[2] or (current_age - entry[5] >= 2):
+                transposition_table[idx] = (key, beta, depth, LB, None, current_age)
             return beta
 
     # sort moves via MVV-LVA for efficient pruning, prioritise move stored in TT
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    scored_moves = [(score_move(board, x, priority_move = tt_move, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(moves)]
-    scored_moves.sort(reverse=True)
-    moves = [m for _,_, m in scored_moves]
+    moves.sort(key=lambda m: score_move(board, m, priority_move=tt_move, k1=killer_move_1, k2=killer_move_2), reverse=True)
     best_score = -math.inf
     best_move = None
 
@@ -213,7 +270,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         # pull you out of a deep hole, futile to check, so skip). i > 0 check prevents skipping every move if all are quiet
         if i > 0 and depth <= 2 and not board.is_check() and alpha > -MATE + 1000:
             FP_margin = 200 * depth
-            if not board.is_capture(move) and not move.promotion and not board.gives_check(move) and (static_eval + FP_margin <= alpha):
+            if not board.is_capture(move) and not move.promotion and (static_eval + FP_margin <= alpha):
                 continue
         #storing states before we push a move
         is_capture = board.is_capture(move)
@@ -255,7 +312,8 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
         alpha = max(alpha, score)
         if alpha >= beta:
-            if not board.is_capture(move):
+            # Exclude captures and promotions from history table intended for quiet moves
+            if not board.is_capture(move) and not move.promotion:
                 # Reward quiet move that caused beta-cutoff, using depth^2 (bigger depth means more prune)
                 history_table[move.from_square][move.to_square] += depth*depth
 
@@ -270,7 +328,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     idx = key & TT_MASK
     entry = transposition_table[idx]
     # If collision, replace stale entry
-    if entry is None or entry['key'] == key or depth >= entry['depth'] or entry['age'] != current_age:
+    if entry is None or depth >= entry[2] or (current_age - entry[5] >= 2):
         # Determine flag
         if best_score <= alpha_initial:
             flag = UB
@@ -287,7 +345,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         elif best_score < - MATE + 1000:
             score_to_store -= ply
 
-        transposition_table[idx] = {'key': key, 'depth': depth, 'score': score_to_store, 'flag': flag, 'move': best_move, 'age': current_age}
+        transposition_table[idx] = (key, score_to_store, depth, flag, best_move, current_age)
 
     return best_score
 
@@ -319,6 +377,13 @@ def get_move(fen: str, time_left_ms: int) -> str:
     best_score = -math.inf
     best_move = legal_moves[0]
 
+    # Pre-populate best_move from TT if available
+    key = hash(board._transposition_key())
+    idx = key & TT_MASK
+    entry = transposition_table[idx]
+    if entry is not None and entry[0] == key and entry[4] in legal_moves:
+        best_move = entry[4]
+
     # Iterative deepening, to get as deep as possible in given time window
     for depth in range(1, 64):
         # Assume next depth will take 2.5x longer than previous. If remaining time less than this, do not attempt depth
@@ -342,9 +407,8 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
             killer_move_1, killer_move_2 = killer_moves[0]
-            scored_moves = [(score_move(board, x, priority_move =best_move, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(legal_moves)]
-            scored_moves.sort(reverse=True)
-            ordered_moves = [m for _, _, m in scored_moves]
+            ordered_moves = list(legal_moves)
+            ordered_moves.sort(key=lambda m: score_move(board, m, priority_move=best_move, k1=killer_move_1, k2=killer_move_2), reverse=True)
 
             for i, move in enumerate(ordered_moves):
                 board.push(move)
