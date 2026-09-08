@@ -152,10 +152,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
 
     # Sort moves for optimal pruning
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    # i needed to break ties in sorting when scores are equal
-    scored_moves = [(score_move(board, x, k1=killer_move_1, k2=killer_move_2, priority_move=tt_move), i, x) for i, x in enumerate(moves)]
-    scored_moves.sort(reverse=True)
-    moves = [m for _,_, m in scored_moves]
+    moves.sort(key=lambda m: score_move(board, m, k1=killer_move_1, k2=killer_move_2, priority_move=tt_move), reverse=True)
 
     for move in moves:
         board.push(move)
@@ -257,9 +254,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
     # sort moves via MVV-LVA for efficient pruning, prioritise move stored in TT
     killer_move_1, killer_move_2 = killer_moves[ply] if ply < MAX_PLY else (None, None)
-    scored_moves = [(score_move(board, x, priority_move = tt_move, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(moves)]
-    scored_moves.sort(reverse=True)
-    moves = [m for _,_, m in scored_moves]
+    moves.sort(key=lambda m: score_move(board, m, priority_move=tt_move, k1=killer_move_1, k2=killer_move_2), reverse=True)
     best_score = -math.inf
     best_move = None
 
@@ -396,9 +391,8 @@ def get_move(fen: str, time_left_ms: int) -> str:
 
             # Prioritise searching best move determined from previous depth first, likely to also be best at this depth
             killer_move_1, killer_move_2 = killer_moves[0]
-            scored_moves = [(score_move(board, x, priority_move =best_move, k1=killer_move_1, k2=killer_move_2), i, x) for i, x in enumerate(legal_moves)]
-            scored_moves.sort(reverse=True)
-            ordered_moves = [m for _, _, m in scored_moves]
+            ordered_moves = list(legal_moves)
+            ordered_moves.sort(key=lambda m: score_move(board, m, priority_move=best_move, k1=killer_move_1, k2=killer_move_2), reverse=True)
 
             for i, move in enumerate(ordered_moves):
                 board.push(move)
