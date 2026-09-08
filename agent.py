@@ -237,6 +237,9 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     if depth <= 3 and not board.is_check() and beta < MATE - 1000:
         RFP_margin = 120 * depth
         if static_eval - RFP_margin >= beta:
+            # TT Store on RFP Cutoff
+            if entry is None or depth >= entry[2] or (current_age - entry[5] >= 2):
+                transposition_table[idx] = (key, static_eval, depth, LB, None, current_age)
             return static_eval
 
     # Null Move Pruning (Simulate giving opponent extra move, large advantage, and search with reduced window + depth.
@@ -250,6 +253,9 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         null_score = -negamax(board, depth-1-R, -beta, -beta + 1, start_time, time_limit, node_count, ply+1, allow_null=False)
         board.pop()
         if null_score >= beta:
+            # TT Store on NMP Cutoff
+            if entry is None or depth >= entry[2] or (current_age - entry[5] >= 2):
+                transposition_table[idx] = (key, beta, depth, LB, None, current_age)
             return beta
 
     # sort moves via MVV-LVA for efficient pruning, prioritise move stored in TT
