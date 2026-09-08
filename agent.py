@@ -89,21 +89,22 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         if time.time() - start_time > time_limit:
             raise TimeoutException()
 
+    alpha_initial = alpha
+
     # TT Probe in QS
     key = hash(board._transposition_key())
     idx = key & TT_MASK
     entry = transposition_table[idx]
     tt_move = None
 
-    if entry is not None and entry['key'] == key:
-        tt_move = entry['move']
-        cached_score = entry['score']
+    if entry is not None and entry[0] == key:
+        e_key, cached_score, e_depth, e_flag, tt_move, e_age = entry
         if cached_score > MATE - 1000:
             cached_score -= ply
         elif cached_score < - MATE + 1000:
             cached_score += ply
 
-        if (entry['flag'] == EXACT) or (entry['flag'] == LB and cached_score >= beta) or (entry['flag'] == UB and cached_score <= alpha):
+        if (e_flag == EXACT) or (e_flag == LB and cached_score >= beta) or (e_flag == UB and cached_score <= alpha):
             return cached_score
 
     # If in check, cannot only look at captures. Must look at all legal moves
@@ -118,9 +119,12 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
         # stand-pat enables 'standing pat', break capture chain to not force captures if not optimal
         stand_pat = evaluate(board)
 
-        # If current state > beta, it cannot be reached so prune
+        # Stand-pat Beta Cutoff (store LB entry before returning)
         if stand_pat >= beta:
+            if entry is None or 0 >= entry[2] or (current_age - entry[5] >= 2):
+                transposition_table[idx] = (key, stand_pat, 0, LB, None, current_age)
             return beta
+
         if stand_pat > alpha:
             alpha = stand_pat
 
@@ -160,9 +164,31 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
 
         best_score = max(score, best_score)
         if score >= beta:
-            return beta
+            break
+
         if score > alpha:
             alpha = score
+
+    # Write to TT. QS operates at depth 0, so only ovewrite collision if it is stale or also a QS
+    # entry (depth also 0) as it is more shallow / less computationally expensive than non-QS entry
+    if entry is None or 0 >= entry[2] or (current_age - entry[5] >= 2):
+        # Determine flag
+        if best_score <= alpha_initial:
+            flag = UB
+        elif best_score >= beta:
+            flag = LB
+        else:
+            flag = EXACT
+
+        # Convert MATE score from being bottom-relative to top-relative when storing
+        # (Encode the distance of mate from this board state than from depth limit)
+        score_to_store = best_score
+        if best_score > MATE - 1000:
+            score_to_store += ply
+        elif best_score < - MATE + 1000:
+            score_to_store -= ply
+
+        transposition_table[idx] = (key, score_to_store, 0, flag, None, current_age)
 
     return best_score
 
@@ -187,19 +213,18 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     # Check if board state is in transposition table
     idx = key & TT_MASK
     entry = transposition_table[idx]
-    if entry is not None and entry['key'] == key:
-        tt_move = entry['move']
+    if entry is not None and entry[0] == key:
+        e_key, cached_score, e_depth, e_flag, tt_move, e_age = entry
 
         # Only used cached score if depth from entry exceeds current depth, otherwise may not be otptimal
-        if entry['depth'] >= depth:
-            cached_score = entry['score']
+        if e_depth >= depth:
             # Re-convert mate distance from being top-relative to bottom-relative
             if cached_score > MATE - 1000:
                 cached_score -= ply
             elif cached_score < - MATE + 1000:
                 cached_score += ply
 
-            if (entry['flag'] == EXACT) or (entry['flag'] == LB and cached_score >= beta) or (entry['flag'] == UB and cached_score <= alpha):
+            if (e_flag == EXACT) or (e_flag == LB and cached_score >= beta) or (e_flag == UB and cached_score <= alpha):
                 return cached_score
 
     moves = list(board.legal_moves)
@@ -298,7 +323,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     idx = key & TT_MASK
     entry = transposition_table[idx]
     # If collision, replace stale entry
-    if entry is None or entry['key'] == key or depth >= entry['depth'] or entry['age'] != current_age:
+    if entry is None or depth >= entry[2] or (current_age - entry[5] >= 2):
         # Determine flag
         if best_score <= alpha_initial:
             flag = UB
@@ -315,7 +340,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         elif best_score < - MATE + 1000:
             score_to_store -= ply
 
-        transposition_table[idx] = {'key': key, 'depth': depth, 'score': score_to_store, 'flag': flag, 'move': best_move, 'age': current_age}
+        transposition_table[idx] = (key, score_to_store, depth, flag, best_move, current_age)
 
     return best_score
 
@@ -351,8 +376,8 @@ def get_move(fen: str, time_left_ms: int) -> str:
     key = hash(board._transposition_key())
     idx = key & TT_MASK
     entry = transposition_table[idx]
-    if entry is not None and entry['key'] == key and entry['move'] in legal_moves:
-        best_move = entry['move']
+    if entry is not None and entry[0] == key and entry[4] in legal_moves:
+        best_move = entry[4]
 
     # Iterative deepening, to get as deep as possible in given time window
     for depth in range(1, 64):
