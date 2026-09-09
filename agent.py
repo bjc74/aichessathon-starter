@@ -245,10 +245,10 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
     # Null Move Pruning (Simulate giving opponent extra move, large advantage, and search with reduced window + depth.
     # if still beta-cutoff, current board position too strong, prune). R is reduced depth amount.
-    R = 2
+    R = 3 + depth // 6
     # Do not NMP if in check (cannot skip move here...) or if end game and opponent can only move king/pawns
     # Latter to prevent NMP occuring in zugzwang, where skipping move isn't disadvantage and would defeat NMP purpose
-    if allow_null and beta < MATE - 1000 and depth >= R + 1 and not board.is_check() and bool(board.occupied_co[board.turn] & ~board.pawns & ~board.kings):
+    if allow_null and static_eval >= beta and beta < MATE - 1000 and depth >= R + 1 and not board.is_check() and bool(board.occupied_co[board.turn] & ~board.pawns & ~board.kings):
         board.push(chess.Move.null())
         # Reduced depth and window, and allow_null set to False prevents adjacent null moves
         null_score = -negamax(board, depth-1-R, -beta, -beta + 1, start_time, time_limit, node_count, ply+1, allow_null=False)
