@@ -1,16 +1,40 @@
 import chess
-from tables import WHITE_COMBINED, BLACK_COMBINED
+from tables import WHITE_COMBINED, BLACK_COMBINED, KING_MIDDLEGAME, KING_ENDGAME
 
 
 BISHOP_PAIR_BONUS = 30
 DOUBLED_PAWN_PENALTY = 12
 ISOLATED_PAWN_PENALTY = 10
-
+ROOK_SEMI_OPEN_BONUS = 10
+ROOK_OPEN_BONUS = 20
 # Indexed by how far the pawn has advanced.
 PASSED_PAWN_BONUS = [0, 0, 5, 10, 20, 35, 60, 0]
 
 # For each file, contains the two neighbouring files.
 ADJACENT_FILE_MASKS = [0] * 8
+KING_SHIELD_PENALTY = 12
+
+WHITE_KING_SHIELD = [0] * 64
+BLACK_KING_SHIELD = [0] * 64
+
+for sq in range(64):
+
+    file = chess.square_file(sq)
+    rank = chess.square_rank(sq)
+
+    # Squares one rank in front of White king
+    if rank < 7:
+        for f in range(max(0, file - 1), min(7, file + 1) + 1):
+            WHITE_KING_SHIELD[sq] |= chess.BB_SQUARES[
+                chess.square(f, rank + 1)
+            ]
+
+    # Squares one rank in front of Black king
+    if rank > 0:
+        for f in range(max(0, file - 1), min(7, file + 1) + 1):
+            BLACK_KING_SHIELD[sq] |= chess.BB_SQUARES[
+                chess.square(f, rank - 1)
+            ]
 
 for file in range(8):
 
@@ -56,6 +80,8 @@ for sq in range(64):
 
     WHITE_PASSED_MASKS[sq] = white_mask
     BLACK_PASSED_MASKS[sq] = black_mask
+MAX_PHASE = 24
+
 def evaluate(board: chess.Board) -> int:
 
     score = 0
@@ -68,6 +94,9 @@ def evaluate(board: chess.Board) -> int:
 
     white_bishops = board.bishops & w_occ
     black_bishops = board.bishops & b_occ
+
+    white_rooks = board.rooks & w_occ
+    black_rooks = board.rooks & b_occ   
 
     # ---------------------------------------------------------
     # Material + PST
@@ -91,10 +120,10 @@ def evaluate(board: chess.Board) -> int:
     for sq in chess.scan_forward(black_bishops):
         score -= BLACK_COMBINED[chess.BISHOP][sq]
 
-    for sq in chess.scan_forward(board.rooks & w_occ):
+    for sq in chess.scan_forward(white_rooks):
         score += WHITE_COMBINED[chess.ROOK][sq]
 
-    for sq in chess.scan_forward(board.rooks & b_occ):
+    for sq in chess.scan_forward(black_rooks):
         score -= BLACK_COMBINED[chess.ROOK][sq]
 
     for sq in chess.scan_forward(board.queens & w_occ):
@@ -108,6 +137,58 @@ def evaluate(board: chess.Board) -> int:
 
     for sq in chess.scan_forward(board.kings & b_occ):
         score -= BLACK_COMBINED[chess.KING][sq]
+    # Game phase: 24 at the start, 0 in a pure pawn ending
+    phase = (
+        chess.popcount(board.knights)
+        + chess.popcount(board.bishops)
+        + 2 * chess.popcount(board.rooks)
+        + 4 * chess.popcount(board.queens)
+    )
+
+    phase = min(phase, 24)
+    
+    white_king = board.king(chess.WHITE)
+    black_king = board.king(chess.BLACK)
+
+    # Basic king pawn shield
+    w_shield_mask = WHITE_KING_SHIELD[white_king]
+    b_shield_mask = BLACK_KING_SHIELD[black_king]
+
+    w_expected = chess.popcount(w_shield_mask)
+    b_expected = chess.popcount(b_shield_mask)
+
+    w_shield = chess.popcount(white_pawns & w_shield_mask)
+    b_shield = chess.popcount(black_pawns & b_shield_mask)
+
+    w_missing = w_expected - w_shield
+    b_missing = b_expected - b_shield
+
+    # Strong in middlegame, fades to zero in endgame
+    score -= (
+        w_missing * KING_SHIELD_PENALTY * phase
+    ) // 24
+
+    score += (
+        b_missing * KING_SHIELD_PENALTY * phase
+    ) // 24
+    # How far towards an endgame we are
+    endgame_weight = 24 - phase
+    # Current score already contains the middlegame king PST,
+    # so gradually add the difference between EG and MG.
+    w_sq = white_king ^ 56
+    b_sq = black_king
+
+    score += (
+        endgame_weight
+        * (KING_ENDGAME[w_sq] - KING_MIDDLEGAME[w_sq])
+        //24
+    )
+
+    score -= (
+        endgame_weight
+        * (KING_ENDGAME[b_sq] - KING_MIDDLEGAME[b_sq])
+        // 24
+    )
 
     # ---------------------------------------------------------
     # Bishop pair
@@ -151,6 +232,25 @@ def evaluate(board: chess.Board) -> int:
             black_pawns & ADJACENT_FILE_MASKS[file]
         ):
             score += ISOLATED_PAWN_PENALTY * black_count
+        white_rooks_on_file = white_rooks & file_mask
+        black_rooks_on_file = black_rooks & file_mask
+
+        # White rook
+        if white_rooks_on_file and not white_on_file:
+
+            if not black_on_file:
+                score += ROOK_OPEN_BONUS * chess.popcount(white_rooks_on_file)
+            else:
+                score += ROOK_SEMI_OPEN_BONUS * chess.popcount(white_rooks_on_file)
+
+
+        # Black rook
+        if black_rooks_on_file and not black_on_file:
+
+            if not white_on_file:
+                score -= ROOK_OPEN_BONUS * chess.popcount(black_rooks_on_file)
+            else:
+                score -= ROOK_SEMI_OPEN_BONUS * chess.popcount(black_rooks_on_file)
 
     # ---------------------------------------------------------
     # Passed pawns
