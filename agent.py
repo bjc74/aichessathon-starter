@@ -275,15 +275,14 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         #storing states before we push a move
         is_capture = board.is_capture(move)
         in_check = board.is_check()
-        gives_check = board.gives_check(move)
         board.push(move)
         # Perform principal variation search: With efficient move ordering, first move highly likely to be optimal
         if i == 0:
             score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
         # Every other move searched with zero window (need to prove cheaply that move is worse than first, no need for find exact score)
         else:
-            # LMR eligibility: Late move, depth >= 3, quiet move, not in check, does not give check
-            if i >= 3 and depth >= 3 and not is_capture and not move.promotion and not in_check and not gives_check:
+            # LMR eligibility: Late move, depth >= 3, quiet move, not in check
+            if i >= 3 and depth >= 3 and not is_capture and not move.promotion and not in_check:
                 # If LMR eligible, search later moves with reduced depth from lookup table
                 reduction = LMR_TABLE[min(depth,63)][min(i,63)]
                 reduced_depth = max(0, depth -1 -reduction)
