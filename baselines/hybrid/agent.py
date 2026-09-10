@@ -5,7 +5,14 @@ from tables import PIECE_VALUES
 #imported current eval
 #from eval import evaluate
 # NNUE experiment
-from incremental_nnue import (build_accumulator, update_accumulator, evaluate_from_accumulator, evaluate_nnue_rebuild, fc2_weights, fc2_bias, fc3_weights, fc3_bias)
+import sys
+from pathlib import Path
+
+EVAL_DIR = Path(__file__).resolve().parent / "eval"
+sys.path.append(str(EVAL_DIR))
+
+#from nnue_inference import evaluate_nnue as evaluate
+from hybrid_nnue import evaluate_hybrid_nnue as evaluate
 # Flags for bounds in Transposition Table
 EXACT = 0
 LB = 1
@@ -34,50 +41,7 @@ LMR_TABLE = [[0] * 64 for _ in range(64)]
 for d in range(1,64):
     for m in range(1,64):
         LMR_TABLE[d][m] = int(0.5 + (math.log(d) * math.log(m)) / 2)
-nnue_accumulator = None
-nnue_material_white = 0
 
-nnue_accumulator_stack = []
-nnue_material_stack = []
-def initialise_nnue(board):
-    global nnue_accumulator, nnue_material_white
-    nnue_accumulator, nnue_material_white = build_accumulator(board)
-    nnue_accumulator_stack.clear()
-    nnue_material_stack.clear()
-def evaluate(board):
-    return evaluate_from_accumulator(nnue_accumulator, nnue_material_white, board.turn == chess.WHITE, fc2_weights, fc2_bias, fc3_weights, fc3_bias)
-def push_nnue(board, move):
-
-    global nnue_accumulator
-    global nnue_material_white
-
-    nnue_accumulator_stack.append(
-        nnue_accumulator.copy()
-    )
-
-    nnue_material_stack.append(
-        nnue_material_white
-    )
-
-    nnue_material_white = update_accumulator(
-        board,
-        move,
-        nnue_accumulator,
-        nnue_material_white
-    )
-
-    board.push(move)
-
-
-def pop_nnue(board):
-
-    global nnue_accumulator
-    global nnue_material_white
-
-    board.pop()
-
-    nnue_accumulator = nnue_accumulator_stack.pop()
-    nnue_material_white = nnue_material_stack.pop()
 # Custom exception raised when a move runs out of its allocated time
 class TimeoutException(Exception):
     pass
@@ -201,11 +165,9 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
     moves.sort(key=lambda m: score_move(board, m, k1=killer_move_1, k2=killer_move_2, priority_move=tt_move), reverse=True)
 
     for move in moves:
-        push_nnue(board, move)
-
-        score = -quiescence_search(board,-beta,-alpha,start_time,time_limit,node_count,ply + 1)
-
-        pop_nnue(board)
+        board.push(move)
+        score = -quiescence_search(board, -beta, -alpha, start_time, time_limit, node_count, ply+1)
+        board.pop()
 
         best_score = max(score, best_score)
         if score >= beta:
@@ -296,10 +258,10 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
     # Do not NMP if in check (cannot skip move here...) or if end game and opponent can only move king/pawns
     # Latter to prevent NMP occuring in zugzwang, where skipping move isn't disadvantage and would defeat NMP purpose
     if allow_null and static_eval >= beta and beta < MATE - 1000 and depth >= R + 1 and not board.is_check() and bool(board.occupied_co[board.turn] & ~board.pawns & ~board.kings):
-        push_nnue(board, chess.Move.null())
+        board.push(chess.Move.null())
         # Reduced depth and window, and allow_null set to False prevents adjacent null moves
         null_score = -negamax(board, depth-1-R, -beta, -beta + 1, start_time, time_limit, node_count, ply+1, allow_null=False)
-        pop_nnue(board)
+        board.pop()
         if null_score >= beta:
             # TT Store on NMP Cutoff
             if entry is None or depth >= entry[2] or (current_age - entry[5] >= 2):
@@ -322,7 +284,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         #storing states before we push a move
         is_capture = board.is_capture(move)
         in_check = board.is_check()
-        push_nnue(board, move)
+        board.push(move)
         # Perform principal variation search: With efficient move ordering, first move highly likely to be optimal
         if i == 0:
             score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
@@ -350,7 +312,7 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
                 if alpha < score < beta:
                     score = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit, node_count, ply+1, allow_null=True)
 
-        pop_nnue(board)
+        board.pop()
 
         if score > best_score:
             best_score = score
@@ -397,7 +359,6 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
 
 def get_move(fen: str, time_left_ms: int) -> str:
     global history_table, killer_moves, current_age
-    global nnue_accumulator, nnue_material_white
     current_age += 1
 
     board = chess.Board(fen)
@@ -408,7 +369,6 @@ def get_move(fen: str, time_left_ms: int) -> str:
     if not legal_moves:
         return ''
 
-    initialise_nnue(board)
     # Adapt remaining moves dynamically
     remaining_moves = max(10, 50 - board.fullmove_number)
     increment_time = 0.5
@@ -459,7 +419,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
             ordered_moves.sort(key=lambda m: score_move(board, m, priority_move=best_move, k1=killer_move_1, k2=killer_move_2), reverse=True)
 
             for i, move in enumerate(ordered_moves):
-                push_nnue(board, move)
+                board.push(move)
                 # Principal variation search, just like in negamax function
                 if i == 0:
                     score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
@@ -467,7 +427,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
                     score = -negamax(board, depth-1, -alpha-1, -alpha, start_time, time_limit, node_count, 1)
                     if alpha < score < beta:
                         score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
-                pop_nnue(board)
+                board.pop()
 
                 if score > current_best_score:
                     current_best_score = score
@@ -487,7 +447,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
                 ordered_moves = [m for _, _, m in scored_moves]
                     
                 for i, move in enumerate(ordered_moves):
-                    push_nnue(board, move)
+                    board.push(move)
                     # Principal variation search, just like in negamax function
                     if i == 0:
                         score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
@@ -495,7 +455,7 @@ def get_move(fen: str, time_left_ms: int) -> str:
                         score = -negamax(board, depth-1, -alpha-1, -alpha, start_time, time_limit, node_count, 1)
                         if alpha < score < beta:
                             score = -negamax(board, depth-1, -beta, -alpha, start_time, time_limit, node_count, 1)
-                    pop_nnue(board)
+                    board.pop()
                     if score > current_best_score:
                         current_best_score = score
                         current_best_move = move

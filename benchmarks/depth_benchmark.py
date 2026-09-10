@@ -59,6 +59,7 @@ def reset_engine_state():
 
 
 def search_root(board, depth):
+    agent.initialise_nnue(board)
     start_time = time.time()
 
     # Effectively disable timeout for fixed-depth testing
@@ -92,7 +93,7 @@ def search_root(board, depth):
     ordered_moves = [move for _, _, move in scored_moves]
 
     for i, move in enumerate(ordered_moves):
-        board.push(move)
+        agent.push_nnue(board, move)
 
         if i == 0:
             score = -agent.negamax(
@@ -129,7 +130,7 @@ def search_root(board, depth):
                     1,
                 )
 
-        board.pop()
+        agent.pop_nnue(board)
 
         if score > best_score:
             best_score = score
