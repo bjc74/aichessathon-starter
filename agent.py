@@ -91,7 +91,7 @@ class TimeoutException(Exception):
     pass
 
 def probe_syzygy_root(board: chess.Board) -> chess.Move | None:
-    # Probes root node for optimal move in <= 4 piece positions
+    # Probes root node for optimal move in <= 5 piece positions
     if SYZYGY_TABLEBASE is None or len(board.piece_map()) > 4:
         return None
 
@@ -197,11 +197,11 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
     if not (node_count[0] & 2047):
         if time.time() - start_time > time_limit:
             raise TimeoutException()
-
+    '''
     tb_score = evaluate_syzygy(board, ply)
     if tb_score is not None:
         return tb_score
-
+    '''
     alpha_initial = alpha
 
     # TT Probe in QS
@@ -311,11 +311,11 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         eval_val = evaluate(board)
         draw_score = min(0, -int(eval_val*0.5))
         return draw_score
-
+    '''
     tb_score = evaluate_syzygy(board, ply)
     if tb_score is not None:
         return tb_score
-
+    '''
     # Check if move time limit exceeded every 2048 nodes
     node_count[0] += 1
     if not (node_count[0] & 2047):
