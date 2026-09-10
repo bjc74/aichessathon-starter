@@ -1,5 +1,6 @@
 import math
 import chess
+import chess.syzygy
 import time
 from tables import PIECE_VALUES
 #imported current eval
@@ -22,6 +23,13 @@ current_age = 0
 MAX_PLY = 128
 #mate
 MATE = 10**6
+
+SYZYGY_TABLEBASE = None
+try:
+    # Opens 3-4 piece tablebase files once at startup
+    SYZYGY_TABLEBASE = chess.syzygy.open_tablebase("./syzygy")
+except Exception:
+    SYZYGY_TABLEBASE = None
 
 # Global Transposition Table array
 transposition_table = [None] * TT_SIZE
@@ -82,6 +90,61 @@ def pop_nnue(board):
 class TimeoutException(Exception):
     pass
 
+def probe_syzygy_root(board: chess.Board) -> chess.Move | None:
+    # Probes root node for optimal move in <= 4 piece positions
+    if SYZYGY_TABLEBASE is None or len(board.piece_map()) > 4:
+        return None
+
+    try:
+        best_move = None
+        best_wdl = -3   # Set below -2 so the first move always populates best_move
+        best_dtz = -float('inf')
+
+        for move in board.legal_moves:
+            board.push(move)
+            
+            # probe_wdl returns outcome for side to move after push; invert for current player
+            opp_wdl = SYZYGY_TABLEBASE.probe_wdl(board)
+            wdl = -opp_wdl
+            
+            # Safely probe DTZ (fallback to 0 if only WDL tables are installed)
+            try:
+                dtz = SYZYGY_TABLEBASE.probe_dtz(board)
+            except chess.syzygy.MissingTableError:
+                dtz = 0
+                
+            board.pop()
+
+            # Selection hierarchy:
+            # 1. Prefer higher WDL (Win > Draw > Loss)
+            # 2. For equal WDL, higher DTZ is always better (faster win when >0, longer defense when <0)
+            if wdl > best_wdl:
+                best_wdl = wdl
+                best_dtz = dtz
+                best_move = move
+            elif wdl == best_wdl:
+                if dtz > best_dtz:
+                    best_dtz = dtz
+                    best_move = move
+
+        return best_move
+    except chess.syzygy.MissingTableError:
+        return None
+
+def evaluate_syzygy(board: chess.Board, ply: int) -> int | None:
+    # Returns exact score in search tree if position exists in tablebase
+    if SYZYGY_TABLEBASE is not None and len(board.piece_map()) <= 4:
+        try:
+            wdl = SYZYGY_TABLEBASE.probe_wdl(board)
+            if wdl >= 2:
+                return MATE - 100 - ply   # Unconditional Win
+            elif wdl <= -2:
+                return -MATE + 100 + ply  # Unconditional Loss
+            else:
+                return 0                  # Draw, Cursed Win (1), or Blessed Loss (-1)
+        except chess.syzygy.MissingTableError:
+            pass
+    return None
 
 # Scoring for Move Ordering (Most Valuable Victim Least Valuable Attacker)
 def score_move(board: chess.Board, move: chess.Move, scoring_const: int = 100, priority_move: chess.Move = None, k1: chess.Move =None, k2: chess.Move = None) -> int:
@@ -134,6 +197,10 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, start_time:
     if not (node_count[0] & 2047):
         if time.time() - start_time > time_limit:
             raise TimeoutException()
+
+    tb_score = evaluate_syzygy(board, ply)
+    if tb_score is not None:
+        return tb_score
 
     alpha_initial = alpha
 
@@ -244,6 +311,10 @@ def negamax(board: chess.Board, depth: int, alpha: float, beta: float, start_tim
         eval_val = evaluate(board)
         draw_score = min(0, -int(eval_val*0.5))
         return draw_score
+
+    tb_score = evaluate_syzygy(board, ply)
+    if tb_score is not None:
+        return tb_score
 
     # Check if move time limit exceeded every 2048 nodes
     node_count[0] += 1
@@ -401,6 +472,11 @@ def get_move(fen: str, time_left_ms: int) -> str:
     current_age += 1
 
     board = chess.Board(fen)
+
+    syzygy_move = probe_syzygy_root(board)
+    if syzygy_move is not None:
+        return syzygy_move.uci()
+    
     # Clear killer moves
     killer_moves = [[None, None] for _ in range(MAX_PLY)]
 
