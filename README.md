@@ -1,81 +1,161 @@
-# AI Chessathon starter
+# AI Chessathon Chess Engine
 
-Fork this to build an agent for [AI Chessathon](https://aichessathon.com). It gives you a working
-submission, baselines to beat, and a local harness that speaks the same protocol and enforces the
-same clock as the platform, so you can see whether a change actually helped before you upload it.
+A chess engine developed for the 2026 AI Chessathon, built on the official competition starter repository.
 
+The final engine combines a modern alpha-beta search stack with a compact NNUE-style neural evaluator, incremental inference, transposition tables, move-ordering heuristics and Syzygy endgame tablebases.
+
+## Engine Architecture
+
+### Search
+
+The engine uses iterative-deepening negamax with alpha-beta pruning and includes:
+
+- Principal Variation Search (PVS)
+- Quiescence search
+- Transposition tables
+- MVV-LVA capture ordering
+- Killer moves and history heuristics
+- Late Move Reductions (LMR)
+- Null Move Pruning
+- Futility and reverse-futility pruning
+- Aspiration windows
+- Repetition and fifty-move handling
+- Dynamic time management
+- Root-level Syzygy tablebase lookup
+
+The search was developed and tuned using deterministic node-count benchmarks and automated engine-vs-engine arenas.
+
+## Evaluation
+
+The submitted engine uses a hybrid neural/material evaluation function.
+
+### NNUE-style evaluator
+
+Network architecture:
+
+`773 → 256 → 32 → 1`
+
+Input features consist of:
+
+- 768 piece-square occupancy features
+- 4 castling-right features
+- 1 side-to-move feature
+
+The model was trained on approximately **1 million Stockfish-labelled chess positions**.
+
+The neural score is combined with an explicit material term to improve tactical robustness, after testing showed that the pure learned evaluator systematically undervalued material losses.
+
+Earlier versions of the engine used a handcrafted evaluator containing:
+
+- Material values
+- Piece-square tables
+- Bishop-pair bonuses
+- Doubled-pawn penalties
+- Isolated-pawn penalties
+- Passed-pawn bonuses
+
+## Incremental NNUE
+
+To make neural evaluation practical inside the search tree, the first NNUE layer is maintained incrementally rather than recomputed from the full board at every leaf.
+
+The accumulator is updated as moves are pushed and popped and supports:
+
+- Normal moves
+- Captures
+- Castling
+- En passant
+- Promotions
+- Promotion captures
+- Castling-right changes
+- Null moves
+
+The remaining network layers are evaluated from the stored accumulator, substantially reducing per-node evaluation overhead.
+
+## Testing and Benchmarking
+
+Development included:
+
+- Fixed-depth search benchmarks
+- Deterministic node-count regression tests
+- Full-window vs aspiration-window A/B tests
+- Engine-vs-engine arena testing
+- Held-out NNUE validation
+- Material-sensitivity experiments
+- Incremental-accumulator equivalence tests
+- Special-move correctness tests
+- Evaluator latency microbenchmarks
+- Push/evaluate/pop node benchmarks
+- Syzygy performance A/B testing
+- Competition-package smoke tests
+
+The final implementation was tested across thousands of generated positions to ensure incremental evaluator state remained consistent with full recomputation.
+
+## Repository Structure
+
+The competition submission is centred around:
+
+```text
+agent.py
+tables.py
+incremental_nnue.py
+nnue_inference.py
+nnue.py
+weights/
+    best_nnue.pth
+    best_nnue.onnx
+syzygy/
 ```
-git clone https://github.com/advitrocks9/aichessathon-starter
+
+The repository also contains the official Chessathon harness and baseline agents used for local testing.
+
+## Running Locally
+
+Install the project:
+
+```bash
+git clone https://github.com/bjc74/aichessathon-starter
 cd aichessathon-starter
 make setup
+```
+
+Run a game against a baseline:
+
+```bash
 make play
 ```
 
-That plays your agent against a baseline over a full 120 s + 0.5 s game and prints the result.
-When you like it, `make zip` and drop `submission.zip` on your dashboard.
+Run a local arena:
 
-## Writing an agent
-
-`agent.py` is the whole submission. One function:
-
-```python
-def get_move(fen: str, time_left_ms: int) -> str:
-    return "e2e4"
+```bash
+make arena
 ```
 
-The fork ships a legal random-mover, so the loop works before you write anything. Replace the body.
+Start from a custom position:
 
+```bash
+make play FEN="<fen>"
 ```
-make play                                          # one game, real time control
-make arena                                         # 20 fast games, prints a score
-make play FEN="<fen>"                              # start from a given position
+
+A specific opponent can also be selected through the harness:
+
+```bash
 uv run python -m harness.play --black baselines/minimax --pgn game.pgn
-uv run python -m harness.arena --opponent ../my-old-version --games 200
 ```
 
-Anything your agent writes to stdout or stderr shows up under the result, so `print` debugging
-works. The platform discards it during rated games and shows it in your validation log.
+## Packaging
 
-## The ladder
+Build a competition submission with:
 
-Measured with `harness/arena.py`. Beating greedy is a search. Beating minimax is a search plus an
-evaluation worth searching with.
-
-| Matchup | Games | Time control | Score |
-|---|---|---|---|
-| random vs greedy | 20 | 10 s + 0.1 s | 10.0% (+1 =2 -17) |
-| greedy vs minimax | 6 | 120 s + 0.5 s | 0.0% (+0 =0 -6) |
-| numba vs minimax | 6 | 10 s + 0.5 s | 66.7% (+2 =4 -0) |
-
-- `baselines/random` plays a uniformly random legal move. It is what `agent.py` starts as.
-- `baselines/greedy` searches one ply on material.
-- `baselines/minimax` searches two plies on material and mobility, with no time management.
-- `baselines/numba` is `minimax` with the evaluation jitted. It is barely stronger, which is
-  the point: jitting a shallow search buys headroom, not depth. Read it for the warm-up call
-  at the bottom, which is how you keep compilation off your clock.
-
-## What's here
-
-```
-agent.py             your submission
-baselines/           random, greedy, minimax, numba; each is a directory with an agent.py
-harness/runner.py    the process the platform runs your agent in
-harness/referee.py   the clock, legality, draw and adjudication rules
-harness/rules.py     the event constants the harness enforces
-harness/sandbox.py   the one process, spoken to as the platform speaks to a container
-harness/play.py      one game between two agent directories
-harness/arena.py     many games, with a score
-harness/package.py   builds submission.zip with agent.py at the root
-docs/IDEAS.md        where the strength actually comes from
+```bash
+make zip
 ```
 
-Local games start from the normal position unless you pass `--fen`. Rated games start from
-curated neutral positions.
+This produces `submission.zip` in the format expected by the Chessathon platform.
 
-The harness is here so your games are honest, not so you can pre-validate an upload. Acceptance
-happens on the platform, and the validation log on your dashboard is the authority on it.
+## Competition
 
-## The rules
+The repository is based on the official [AI Chessathon](https://aichessathon.com) starter project.
 
-[aichessathon.com/docs](https://aichessathon.com/docs) is canonical and changes. Read it before
-you upload.
+Competition rules and submission requirements are documented at:
+
+https://aichessathon.com/docs

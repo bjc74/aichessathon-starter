@@ -91,8 +91,13 @@ class TimeoutException(Exception):
     pass
 
 def probe_syzygy_root(board: chess.Board) -> chess.Move | None:
+<<<<<<< Updated upstream
     # Probes root node for optimal move in <= 5 piece positions
     if SYZYGY_TABLEBASE is None or len(board.piece_map()) > 4:
+=======
+    # Probes root node for optimal move in <= 4 piece positions
+    if SYZYGY_TABLEBASE is None or board.occupied.bit_count() > 4:
+>>>>>>> Stashed changes
         return None
 
     try:
@@ -102,22 +107,24 @@ def probe_syzygy_root(board: chess.Board) -> chess.Move | None:
 
         for move in board.legal_moves:
             board.push(move)
-            
-            # probe_wdl returns outcome for side to move after push; invert for current player
-            opp_wdl = SYZYGY_TABLEBASE.probe_wdl(board)
-            wdl = -opp_wdl
-            
-            # Safely probe DTZ (fallback to 0 if only WDL tables are installed)
+
             try:
-                dtz = SYZYGY_TABLEBASE.probe_dtz(board)
-            except chess.syzygy.MissingTableError:
-                dtz = 0
-                
-            board.pop()
+                # probe_wdl returns outcome for side to move after push; invert for current player
+                opp_wdl = SYZYGY_TABLEBASE.probe_wdl(board)
+                wdl = -opp_wdl
+
+                # Safely probe DTZ (fallback to 0 if only WDL tables are installed)
+                try:
+                    dtz = SYZYGY_TABLEBASE.probe_dtz(board)
+                except chess.syzygy.MissingTableError:
+                    dtz = 0
+
+            finally:
+                board.pop()
 
             # Selection hierarchy:
             # 1. Prefer higher WDL (Win > Draw > Loss)
-            # 2. For equal WDL, higher DTZ is always better (faster win when >0, longer defense when <0)
+            # 2. For equal WDL, higher DTZ is always better
             if wdl > best_wdl:
                 best_wdl = wdl
                 best_dtz = dtz
@@ -128,12 +135,13 @@ def probe_syzygy_root(board: chess.Board) -> chess.Move | None:
                     best_move = move
 
         return best_move
+
     except chess.syzygy.MissingTableError:
         return None
 
 def evaluate_syzygy(board: chess.Board, ply: int) -> int | None:
     # Returns exact score in search tree if position exists in tablebase
-    if SYZYGY_TABLEBASE is not None and len(board.piece_map()) <= 4:
+    if SYZYGY_TABLEBASE is not None and board.occupied.bit_count() <= 4:
         try:
             wdl = SYZYGY_TABLEBASE.probe_wdl(board)
             if wdl >= 2:
