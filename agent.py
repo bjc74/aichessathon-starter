@@ -91,13 +91,8 @@ class TimeoutException(Exception):
     pass
 
 def probe_syzygy_root(board: chess.Board) -> chess.Move | None:
-<<<<<<< Updated upstream
-    # Probes root node for optimal move in <= 5 piece positions
-    if SYZYGY_TABLEBASE is None or len(board.piece_map()) > 4:
-=======
     # Probes root node for optimal move in <= 4 piece positions
     if SYZYGY_TABLEBASE is None or board.occupied.bit_count() > 4:
->>>>>>> Stashed changes
         return None
 
     try:
